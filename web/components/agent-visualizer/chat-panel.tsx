@@ -6,6 +6,7 @@ import { TranscriptMessage } from './transcript-message'
 import type { ConversationMessage } from '@/hooks/simulation/types'
 import { PanelHeader, SlidingPanel, stopPropagationHandlers } from './shared-ui'
 import { useAutoScroll } from '@/hooks/use-auto-scroll'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 
 interface ChatPanelProps {
   visible: boolean
@@ -25,6 +26,7 @@ export function AgentChatPanel({
   onClose,
 }: ChatPanelProps) {
   const { ref: logRef } = useAutoScroll(conversation.length, visible)
+  const isMobile = useIsMobile()
 
   const stateColor = getStateColor(agentState)
 
@@ -34,9 +36,21 @@ export function AgentChatPanel({
       position={{ bottom: 64, right: 12 }}
       zIndex={Z.chatPanel}
       width={CARD.chat.width}
+      // Mobile: bottom sheet spanning full width instead of a floating card
+      mobilePosition={{ bottom: 0, left: 0, right: 0 }}
+      mobileWidth="100%"
+      mobileAxis="Y"
       {...stopPropagationHandlers}
     >
-      <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', maxHeight: CARD.chat.maxHeight }}>
+      <div
+        className="glass-card"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          maxHeight: isMobile ? '70vh' : CARD.chat.maxHeight,
+          borderRadius: isMobile ? '12px 12px 0 0' : undefined,
+        }}
+      >
         <PanelHeader onClose={onClose} className="mb-2 flex-shrink-0">
           <div
             className="w-1.5 h-1.5 rounded-full"
@@ -54,7 +68,10 @@ export function AgentChatPanel({
         <div
           ref={logRef}
           className="flex-1 overflow-y-auto space-y-1.5 mb-2"
-          style={{ minHeight: CARD.chat.messagesMinHeight, maxHeight: CARD.chat.messagesMaxHeight }}
+          style={{
+            minHeight: CARD.chat.messagesMinHeight,
+            maxHeight: isMobile ? 'calc(70vh - 60px)' : CARD.chat.messagesMaxHeight,
+          }}
         >
           {conversation.length === 0 ? (
             <div className="flex items-center justify-center h-full">

@@ -6,6 +6,7 @@ import { COLORS, ROLE_COLORS, getStateColor } from '@/lib/colors'
 import type { ConversationMessage } from '@/hooks/simulation/types'
 import { useClickOutside } from '@/hooks/use-click-outside'
 import { useVirtualList } from '@/hooks/use-virtual-list'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 
 interface MessageFeedPanelProps {
   conversations: Map<string, ConversationMessage[]>
@@ -33,6 +34,7 @@ export function MessageFeedPanel({
   onAgentClick,
   selectedAgentId,
 }: MessageFeedPanelProps) {
+  const isMobile = useIsMobile()
   const [expanded, setExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState<string>('all')
   const [unread, setUnread] = useState<Set<string>>(new Set())
@@ -195,7 +197,7 @@ export function MessageFeedPanel({
         style={{ top: 48, left: 12, zIndex: Z.info, pointerEvents: 'auto' }}
         onClick={() => setExpanded(true)}
       >
-        <div className="glass-card px-3 py-2 flex items-center gap-2" style={{ maxWidth: 320 }}>
+        <div className="glass-card px-3 py-2 flex items-center gap-2" style={{ maxWidth: isMobile ? 'calc(100vw - 24px)' : 320 }}>
           <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: role.text }} />
           <span className="text-[9px] font-mono font-semibold shrink-0" style={{ color: COLORS.textPrimary }}>
             {agentName.length > COLLAPSED_AGENT_NAME_MAX ? agentName.slice(0, COLLAPSED_AGENT_NAME_MAX) + '..' : agentName}
@@ -217,7 +219,7 @@ export function MessageFeedPanel({
       style={{ top: 48, left: 12, zIndex: Z.info, pointerEvents: 'auto' }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="glass-card flex flex-col" style={{ width: 320, maxHeight: 420 }}>
+      <div className="glass-card flex flex-col" style={{ width: isMobile ? 'calc(100vw - 24px)' : 320, maxHeight: isMobile ? '60vh' : 420 }}>
         {/* Header */}
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <span className="text-[10px] font-mono font-semibold tracking-wider" style={{ color: COLORS.textPrimary }}>

@@ -202,3 +202,20 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/*
+ * Mobile-only additions (max-width: 768px). These never apply above the
+ * breakpoint, so desktop styling above is completely unaffected.
+ */
+@media (max-width: 768px) {
+  /* Prevent the browser's pull-to-refresh / rubber-band scroll from
+     fighting with single-finger canvas panning and panel drag gestures. */
+  html, body {
+    overscroll-behavior: none;
+  }
+
+  /* Larger tap targets and momentum scrolling for touch-scrolled panels. */
+  .glass-card {
+    -webkit-overflow-scrolling: touch;
+  }
+}

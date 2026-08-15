@@ -343,7 +343,7 @@ export function AgentCanvas({
     <div ref={containerRef} className="relative w-full h-full overflow-hidden" style={{ cursor: isDragging ? 'grabbing' : 'grab' }}>
       <canvas
         ref={mainCanvasRef}
-        style={{ width: dimensions.width, height: dimensions.height }}
+        style={{ width: dimensions.width, height: dimensions.height, touchAction: 'none' }}
         {...handlers}
         className="w-full h-full"
       />
