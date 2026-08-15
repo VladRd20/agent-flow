@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { TimelineEvent, Z, POPUP, TIMING } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 
 interface ControlBarProps {
   isPlaying: boolean
@@ -98,6 +99,7 @@ function LiveControlBar({
 }: ControlBarProps) {
   const [pulseOn, setPulseOn] = useState(true)
   const scrubberEvents = useScrubberEvents(timelineEvents, totalDuration)
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     if (isReviewing) return
@@ -110,7 +112,7 @@ function LiveControlBar({
       className="absolute bottom-4 left-4 right-4 mx-auto"
       style={{ pointerEvents: 'auto', maxWidth: POPUP.controlBarMaxWidth, zIndex: Z.controlBar }}
     >
-      <div className="glass-card px-5 py-3 flex items-center gap-3">
+      <div className={`glass-card flex items-center gap-3 ${isMobile ? 'px-3 py-2' : 'px-5 py-3'}`}>
         {/* LIVE badge */}
         <div className="flex items-center gap-1.5 shrink-0">
           <span
@@ -176,6 +178,7 @@ function ReviewControlBar({
   const [isScrubbing, setIsScrubbing] = useState(false)
   const scrubberEvents = useScrubberEvents(timelineEvents, totalDuration)
   const progress = totalDuration > 0 ? currentTime / totalDuration : 0
+  const isMobile = useIsMobile()
 
   const scrubToClientX = useCallback((clientX: number) => {
     const rect = scrubberRef.current?.getBoundingClientRect()
@@ -196,12 +199,46 @@ function ReviewControlBar({
     }
   }, [isScrubbing, scrubToClientX])
 
+  // Touch scrubbing — separate from the mouse path above (native listeners,
+  // passive:false, so preventDefault suppresses synthesized mouse events and
+  // page scroll without altering the mouse handlers at all).
+  useEffect(() => {
+    const el = scrubberRef.current
+    if (!el) return
+    const onTouchStart = (e: TouchEvent) => {
+      e.preventDefault()
+      setIsScrubbing(true)
+      const t = e.touches[0]
+      if (t) scrubToClientX(t.clientX)
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    return () => el.removeEventListener('touchstart', onTouchStart)
+  }, [scrubToClientX])
+
+  useEffect(() => {
+    if (!isScrubbing) return
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault()
+      const t = e.touches[0]
+      if (t) scrubToClientX(t.clientX)
+    }
+    const handleTouchEnd = () => setIsScrubbing(false)
+    window.addEventListener('touchmove', handleTouchMove, { passive: false })
+    window.addEventListener('touchend', handleTouchEnd)
+    window.addEventListener('touchcancel', handleTouchEnd)
+    return () => {
+      window.removeEventListener('touchmove', handleTouchMove)
+      window.removeEventListener('touchend', handleTouchEnd)
+      window.removeEventListener('touchcancel', handleTouchEnd)
+    }
+  }, [isScrubbing, scrubToClientX])
+
   return (
     <div
       className="absolute bottom-4 left-4 right-4 mx-auto"
       style={{ pointerEvents: 'auto', maxWidth: POPUP.controlBarMaxWidth, zIndex: Z.controlBar }}
     >
-      <div className="glass-card px-5 py-3 flex items-center gap-3">
+      <div className={`glass-card flex items-center gap-3 ${isMobile ? 'px-3 py-2' : 'px-5 py-3'}`}>
         {/* Play/Pause */}
         <button
           onClick={onPlayPause}
@@ -226,6 +263,7 @@ function ReviewControlBar({
         <div
           ref={scrubberRef}
           className="flex-1 relative h-8 flex items-center group cursor-pointer"
+          style={{ touchAction: 'none' }}
           onMouseDown={(e) => {
             e.preventDefault()
             setIsScrubbing(true)

@@ -4,6 +4,7 @@ import { FileAttention, Z } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { formatTokens, truncatePath } from '@/lib/utils'
 import { PanelHeader, ProgressBar, SlidingPanel } from './shared-ui'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 
 interface FileAttentionPanelProps {
   visible: boolean
@@ -13,6 +14,7 @@ interface FileAttentionPanelProps {
 }
 
 export function FileAttentionPanel({ visible, fileAttention, onClose, onOpenFile }: FileAttentionPanelProps) {
+  const isMobile = useIsMobile()
   if (!visible) return null
 
   const files = Array.from(fileAttention.values())
@@ -26,8 +28,11 @@ export function FileAttentionPanel({ visible, fileAttention, onClose, onOpenFile
       position={{ top: 48, right: 12 }}
       zIndex={Z.sidePanel}
       width={260}
+      // Mobile: full-screen sheet instead of a small floating card
+      mobilePosition={{ top: 0, left: 0, right: 0, bottom: 0 }}
+      mobileWidth="100%"
     >
-      <div className="glass-card relative">
+      <div className="glass-card relative" style={isMobile ? { height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 0 } : undefined}>
         <PanelHeader onClose={onClose}>
           <span className="text-[10px] font-mono tracking-wider" style={{ color: COLORS.textPrimary }}>
             FILE ATTENTION
@@ -35,7 +40,7 @@ export function FileAttentionPanel({ visible, fileAttention, onClose, onOpenFile
         </PanelHeader>
 
         {/* File list */}
-        <div className="space-y-1 max-h-[300px] overflow-y-auto">
+        <div className="space-y-1 overflow-y-auto" style={{ maxHeight: isMobile ? undefined : 300, flex: isMobile ? 1 : undefined }}>
           {files.length === 0 && (
             <div className="text-[9px] font-mono py-2 text-center" style={{ color: COLORS.textMuted }}>
               No files accessed yet

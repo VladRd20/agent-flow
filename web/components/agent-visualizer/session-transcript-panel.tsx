@@ -65,6 +65,8 @@ export function SessionTranscriptPanel({
       position={{ right: 0, bottom: 0, top: 36 }}
       zIndex={Z.transcriptPanel}
       width={CARD.transcript.width}
+      // Mobile: full-width panel instead of a fixed 380px sidebar
+      mobileWidth="100%"
       {...stopPropagationHandlers}
     >
       <div

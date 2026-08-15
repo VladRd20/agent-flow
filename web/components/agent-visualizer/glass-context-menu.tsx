@@ -1,11 +1,15 @@
 'use client'
 
 import { useRef } from 'react'
-import { Z, TIMING } from '@/lib/agent-types'
+import { Z, TIMING, CARD } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { GlassCard } from './glass-card'
 import { useClickOutside } from '@/hooks/use-click-outside'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 import { stopPropagationHandlers } from './shared-ui'
+
+/** Approximate width used only to keep the menu on-screen on narrow viewports (below) */
+const ESTIMATED_MENU_WIDTH = 180
 
 interface ContextMenuProps {
   position: { x: number; y: number }
@@ -20,8 +24,19 @@ interface ContextMenuProps {
 
 export function GlassContextMenu({ position, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const isMobile = useIsMobile()
 
   useClickOutside(ref, onClose, TIMING.contextMenuDelayMs)
+
+  // On mobile, clamp so a long-press/right-click near a screen edge doesn't
+  // render the menu partially or fully off-screen. Desktop keeps the exact
+  // original unclamped positioning.
+  const left = isMobile && typeof window !== 'undefined'
+    ? Math.min(position.x, window.innerWidth - ESTIMATED_MENU_WIDTH - CARD.margin)
+    : position.x
+  const top = isMobile && typeof window !== 'undefined'
+    ? Math.min(position.y, window.innerHeight - CARD.margin)
+    : position.y
 
   return (
     <div
@@ -29,8 +44,8 @@ export function GlassContextMenu({ position, items, onClose }: ContextMenuProps)
       {...stopPropagationHandlers}
       style={{
         position: 'fixed',
-        left: position.x,
-        top: position.y,
+        left,
+        top,
         zIndex: Z.contextMenu,
       }}
     >

@@ -206,6 +206,218 @@ export function useCanvasInteraction({
     doZoomToFit()
   }, [doZoomToFit])
 
+  // ─── Touch Handlers (mobile) ────────────────────────────────────────────
+  // Native listeners (not React synthetic props) attached with passive:false,
+  // mirroring the wheel handler above — this is required so preventDefault()
+  // actually suppresses the browser's synthesized mouse/click events that
+  // would otherwise fire after a touch and double-trigger selection/drag on
+  // hybrid touch+mouse devices. Desktop mouse handlers above are untouched.
+  const touchStateRef = useRef<{
+    mode: 'none' | 'tap-or-pan' | 'agent-drag' | 'pinch'
+    startX: number
+    startY: number
+    lastX: number
+    lastY: number
+    lastTime: number
+    agentId?: string
+    pinchStartDist: number
+    pinchStartScale: number
+    pinchStartTransform: Transform
+    pinchMidX: number
+    pinchMidY: number
+  }>({
+    mode: 'none', startX: 0, startY: 0, lastX: 0, lastY: 0, lastTime: 0,
+    pinchStartDist: 0, pinchStartScale: 1, pinchStartTransform: { x: 0, y: 0, scale: 1 },
+    pinchMidX: 0, pinchMidY: 0,
+  })
+
+  const touchDist = (t0: Touch, t1: Touch) => Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY)
+  const touchMid = (t0: Touch, t1: Touch) => ({ x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 })
+
+  const handleTouchStartRef = useRef<(e: TouchEvent) => void>(() => {})
+  handleTouchStartRef.current = (e: TouchEvent) => {
+    e.preventDefault()
+    const s = touchStateRef.current
+    if (e.touches.length === 2) {
+      const [t0, t1] = [e.touches[0], e.touches[1]]
+      s.mode = 'pinch'
+      s.pinchStartDist = touchDist(t0, t1)
+      s.pinchStartScale = transformRef.current.scale
+      s.pinchStartTransform = { ...transformRef.current }
+      const mid = touchMid(t0, t1)
+      s.pinchMidX = mid.x
+      s.pinchMidY = mid.y
+      panVelocityRef.current = { vx: 0, vy: 0, active: false }
+      setIsDragging(false)
+      dragTargetRef.current = null
+      return
+    }
+    const t = e.touches[0]
+    if (!t) return
+    const pos = screenToCanvas(t.clientX, t.clientY)
+    const agentId = findAgentAt(pos.x, pos.y)
+    panVelocityRef.current = { vx: 0, vy: 0, active: false }
+    s.startX = t.clientX
+    s.startY = t.clientY
+    s.lastX = t.clientX
+    s.lastY = t.clientY
+    s.lastTime = performance.now()
+    if (agentId) {
+      s.mode = 'agent-drag'
+      s.agentId = agentId
+      setIsDragging(true)
+      dragTargetRef.current = { type: 'agent', id: agentId, startX: t.clientX, startY: t.clientY }
+    } else {
+      s.mode = 'tap-or-pan'
+      setIsDragging(true)
+      dragTargetRef.current = { type: 'canvas', startX: t.clientX, startY: t.clientY }
+      lastPanPosRef.current = { x: t.clientX, y: t.clientY, time: performance.now() }
+    }
+  }
+
+  const handleTouchMoveRef = useRef<(e: TouchEvent) => void>(() => {})
+  handleTouchMoveRef.current = (e: TouchEvent) => {
+    e.preventDefault()
+    const s = touchStateRef.current
+    if (s.mode === 'pinch' && e.touches.length === 2) {
+      const [t0, t1] = [e.touches[0], e.touches[1]]
+      const dist = touchDist(t0, t1)
+      if (s.pinchStartDist > 0) {
+        const ratio = dist / s.pinchStartDist
+        const newScale = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, s.pinchStartScale * ratio))
+        const canvas = mainCanvasRef.current
+        const rect = canvas?.getBoundingClientRect()
+        const mid = touchMid(t0, t1)
+        const anchorX = rect ? mid.x - rect.left : mid.x
+        const anchorY = rect ? mid.y - rect.top : mid.y
+        const startRect = { x: s.pinchStartTransform.x, y: s.pinchStartTransform.y, scale: s.pinchStartTransform.scale }
+        // Anchor zoom around the pinch midpoint (relative to its position at pinch-start)
+        const midRectX = rect ? s.pinchMidX - rect.left : s.pinchMidX
+        const midRectY = rect ? s.pinchMidY - rect.top : s.pinchMidY
+        transformRef.current = {
+          scale: newScale,
+          x: anchorX - (midRectX - startRect.x) * (newScale / startRect.scale),
+          y: anchorY - (midRectY - startRect.y) * (newScale / startRect.scale),
+        }
+      }
+      userHasNavigatedRef.current = true
+      return
+    }
+    if (s.mode === 'tap-or-pan') {
+      const t = e.touches[0]
+      if (!t) return
+      userHasNavigatedRef.current = true
+      const dx = t.clientX - s.lastX
+      const dy = t.clientY - s.lastY
+      const tr = transformRef.current
+      transformRef.current = { ...tr, x: tr.x + dx, y: tr.y + dy }
+      const now = performance.now()
+      const elapsed = Math.max(now - s.lastTime, 1) / 1000
+      panVelocityRef.current = {
+        vx: (t.clientX - s.lastX) / elapsed * CAMERA.velocityScale,
+        vy: (t.clientY - s.lastY) / elapsed * CAMERA.velocityScale,
+        active: false,
+      }
+      s.lastX = t.clientX
+      s.lastY = t.clientY
+      s.lastTime = now
+    } else if (s.mode === 'agent-drag' && s.agentId) {
+      const t = e.touches[0]
+      if (!t) return
+      const pos = screenToCanvas(t.clientX, t.clientY)
+      const screenDist = Math.abs(t.clientX - s.startX) + Math.abs(t.clientY - s.startY)
+      if (screenDist > ANIM.dragThresholdPx) {
+        dragLerpRef.current = { targetX: pos.x, targetY: pos.y, agentId: s.agentId }
+      }
+    }
+  }
+
+  const handleTouchEndRef = useRef<(e: TouchEvent) => void>(() => {})
+  handleTouchEndRef.current = (e: TouchEvent) => {
+    e.preventDefault()
+    const s = touchStateRef.current
+    if (s.mode === 'pinch') {
+      // Pinch ended — if one finger remains, resume it as a pan from here
+      if (e.touches.length === 1) {
+        const t = e.touches[0]
+        s.mode = 'tap-or-pan'
+        s.startX = t.clientX
+        s.startY = t.clientY
+        s.lastX = t.clientX
+        s.lastY = t.clientY
+        s.lastTime = performance.now()
+        dragTargetRef.current = { type: 'canvas', startX: t.clientX, startY: t.clientY }
+        setIsDragging(true)
+        return
+      }
+      s.mode = 'none'
+      setIsDragging(false)
+      dragTargetRef.current = null
+      return
+    }
+
+    if (s.mode === 'tap-or-pan') {
+      const v = panVelocityRef.current
+      if (Math.abs(v.vx) > ANIM.inertiaThreshold || Math.abs(v.vy) > ANIM.inertiaThreshold) {
+        panVelocityRef.current.active = true
+      }
+      const screenDist = Math.abs(s.lastX - s.startX) + Math.abs(s.lastY - s.startY)
+      if (screenDist < ANIM.dragThresholdPx) {
+        // Tap — select whatever's under it
+        const pos = screenToCanvas(s.lastX, s.lastY)
+        const agentId = findAgentAt(pos.x, pos.y)
+        const p = drawPropsRef.current
+        if (agentId) {
+          p.onAgentClick(agentId)
+        } else {
+          const bubbleAgentId = findBubbleAgentAt(pos.x, pos.y)
+          if (bubbleAgentId) {
+            p.onAgentClick(bubbleAgentId)
+          } else {
+            const toolId = findToolCallAt(pos.x, pos.y)
+            if (toolId) {
+              p.onToolCallClick?.(toolId)
+            } else {
+              const discId = findDiscoveryAt(pos.x, pos.y)
+              if (discId) {
+                p.onDiscoveryClick?.(discId)
+              } else {
+                p.onAgentClick(null)
+                p.onToolCallClick?.(null)
+                p.onDiscoveryClick?.(null)
+              }
+            }
+          }
+        }
+      }
+    } else if (s.mode === 'agent-drag' && dragLerpRef.current) {
+      drawPropsRef.current.onAgentDrag(dragLerpRef.current.agentId, dragLerpRef.current.targetX, dragLerpRef.current.targetY)
+      dragLerpRef.current = null
+    }
+
+    s.mode = 'none'
+    setIsDragging(false)
+    dragTargetRef.current = null
+  }
+
+  useEffect(() => {
+    const canvas = mainCanvasRef.current
+    if (!canvas) return
+    const onStart = (e: TouchEvent) => handleTouchStartRef.current(e)
+    const onMove = (e: TouchEvent) => handleTouchMoveRef.current(e)
+    const onEnd = (e: TouchEvent) => handleTouchEndRef.current(e)
+    canvas.addEventListener('touchstart', onStart, { passive: false })
+    canvas.addEventListener('touchmove', onMove, { passive: false })
+    canvas.addEventListener('touchend', onEnd, { passive: false })
+    canvas.addEventListener('touchcancel', onEnd, { passive: false })
+    return () => {
+      canvas.removeEventListener('touchstart', onStart)
+      canvas.removeEventListener('touchmove', onMove)
+      canvas.removeEventListener('touchend', onEnd)
+      canvas.removeEventListener('touchcancel', onEnd)
+    }
+  }, [mainCanvasRef])
+
   const handleContextMenuEvent = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     const pos = screenToCanvas(e.clientX, e.clientY)

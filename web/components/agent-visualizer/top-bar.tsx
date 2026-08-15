@@ -1,12 +1,14 @@
 "use client"
 
-import { memo } from "react"
+import { memo, useRef, useState } from "react"
 import { Z } from "@/lib/agent-types"
 import { COLORS } from "@/lib/colors"
 import { formatTokens } from "@/lib/utils"
 import { agentCost } from "./canvas/draw-cost"
 import { SessionTabs } from "./session-tabs"
 import type { SessionInfo, ConnectionStatus } from "@/lib/bridge-types"
+import { useIsMobile } from "@/hooks/use-is-mobile"
+import { useClickOutside } from "@/hooks/use-click-outside"
 
 // ─── Mute/Unmute SVG Icons ───────────────────────────────────────────────────
 
@@ -100,7 +102,15 @@ export interface TopBarProps {
   onToggleMute: () => void
 }
 
-export const TopBar = memo(function TopBar({
+export const TopBar = memo(function TopBar(props: TopBarProps) {
+  const isMobile = useIsMobile()
+  if (isMobile) return <MobileTopBar {...props} />
+  return <DesktopTopBar {...props} />
+})
+
+// ─── Desktop Top Bar (unchanged) ────────────────────────────────────────────
+
+function DesktopTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
   isVSCode, connectionStatus,
@@ -162,4 +172,111 @@ export const TopBar = memo(function TopBar({
       </div>
     </div>
   )
-})
+}
+
+// ─── Mobile Top Bar ─────────────────────────────────────────────────────────
+// Collapses the right-side toggle group into a tap-to-open menu so the bar
+// never overflows a narrow viewport. Session tabs stay inline/scrollable.
+
+function MobileTopBar({
+  sessions, selectedSessionId, sessionsWithActivity,
+  onSelectSession, onCloseSession,
+  isVSCode, connectionStatus,
+  agentCount, totalTokens,
+  showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
+  onTogglePanel, onToggleTimeline, onToggleMute,
+}: TopBarProps) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useClickOutside(menuRef, () => setMenuOpen(false))
+
+  return (
+    <div className="absolute top-2 left-2 right-2 flex items-center gap-2 font-mono text-[10px]" style={{ zIndex: Z.info }}>
+      {sessions.length > 1 && (
+        <div className="min-w-0 flex-1 overflow-x-auto scrollbar-hide">
+          <SessionTabs
+            sessions={sessions}
+            selectedSessionId={selectedSessionId}
+            sessionsWithActivity={sessionsWithActivity}
+            onSelectSession={onSelectSession}
+            onCloseSession={onCloseSession}
+          />
+        </div>
+      )}
+      <div className="flex-1" />
+
+      <div ref={menuRef} className="relative flex-shrink-0" style={{ pointerEvents: 'auto' }}>
+        <button
+          onClick={() => setMenuOpen(o => !o)}
+          className="flex items-center justify-center rounded"
+          aria-label="Menu"
+          style={{
+            width: 32,
+            height: 32,
+            background: menuOpen ? COLORS.toggleActive : COLORS.toggleInactive,
+            border: `1px solid ${COLORS.toggleBorder}`,
+            color: menuOpen ? COLORS.holoBright : COLORS.textMuted,
+            fontSize: 16,
+          }}
+        >
+          ☰
+        </button>
+
+        {menuOpen && (
+          <div
+            className="absolute right-0 mt-1 rounded flex flex-col gap-1 p-2"
+            style={{
+              minWidth: 200,
+              background: 'rgba(10, 15, 30, 0.92)',
+              backdropFilter: 'blur(20px)',
+              border: `1px solid ${COLORS.holoBorder06}`,
+              boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+            }}
+          >
+            <div className="flex items-center justify-between px-1 py-1" style={{ color: COLORS.textMuted }}>
+              {isVSCode && <ConnectionIndicator status={connectionStatus} />}
+              <span>{agentCount} agents</span>
+            </div>
+            <div className="px-1 pb-1" style={{ color: COLORS.textMuted }}>
+              {formatTokens(totalTokens)} tokens
+              <span style={{ color: COLORS.complete + '65', marginLeft: 4 }}>
+                ~${agentCost(totalTokens).toFixed(2)}
+              </span>
+            </div>
+
+            <MobileMenuToggle label="Files" active={showFileAttention} onClick={() => { onTogglePanel('files'); setMenuOpen(false) }} />
+            <MobileMenuToggle label="Chat" active={showTranscript} onClick={() => { onTogglePanel('transcript'); setMenuOpen(false) }} />
+            <MobileMenuToggle
+              label="$Cost"
+              active={showCostOverlay}
+              onClick={() => { onTogglePanel('cost'); setMenuOpen(false) }}
+              activeColor={{ bg: COLORS.costActiveBg, text: COLORS.complete }}
+            />
+            <MobileMenuToggle label="Timeline" active={showTimeline} onClick={() => { onToggleTimeline(); setMenuOpen(false) }} />
+            <MobileMenuToggle label={isMuted ? 'Unmute' : 'Mute'} active={!isMuted} onClick={onToggleMute} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MobileMenuToggle({ label, active, onClick, activeColor }: {
+  label: string
+  active: boolean
+  onClick: () => void
+  activeColor?: { bg: string; text: string }
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-left px-2 py-1.5 rounded transition-all"
+      style={{
+        background: active ? (activeColor?.bg ?? COLORS.toggleActive) : 'transparent',
+        color: active ? (activeColor?.text ?? COLORS.holoBright) : COLORS.textMuted,
+      }}
+    >
+      {label}
+    </button>
+  )
+}

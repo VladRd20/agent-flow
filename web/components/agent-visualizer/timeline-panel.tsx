@@ -4,6 +4,7 @@ import { useRef, useEffect, useMemo } from 'react'
 import { TimelineEntry, Z } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { PanelHeader, SlidingPanel } from './shared-ui'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 
 interface TimelinePanelProps {
   visible: boolean
@@ -154,6 +155,7 @@ function drawTimeline(
 
 export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const isMobile = useIsMobile()
 
   const sortedEntries = useMemo(() => {
     if (!visible) return []
@@ -192,15 +194,19 @@ export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }
       zIndex={Z.sidePanel}
       className="mx-auto"
       style={{ maxWidth: 700 }}
+      // Mobile: full-width bottom sheet with more vertical room
+      mobilePosition={{ bottom: 0, left: 0, right: 0 }}
+      mobileWidth="100%"
+      mobileStyle={{ maxWidth: '100%' }}
     >
-      <div className="glass-card relative">
+      <div className="glass-card relative" style={isMobile ? { borderRadius: '12px 12px 0 0' } : undefined}>
         <PanelHeader onClose={onClose}>
           <span className="text-[10px] font-mono tracking-wider" style={{ color: COLORS.textPrimary }}>
             EXECUTION TIMELINE
           </span>
         </PanelHeader>
 
-        <div className="overflow-auto" style={{ maxHeight: 300 }}>
+        <div className="overflow-auto" style={{ maxHeight: isMobile ? '50vh' : 300 }}>
           <canvas ref={canvasRef} style={{ display: 'block' }} />
         </div>
 

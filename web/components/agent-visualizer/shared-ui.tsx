@@ -4,6 +4,7 @@ import { useRef, type ReactNode } from 'react'
 import { Z } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { useClickOutside } from '@/hooks/use-click-outside'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 import { clampPopupPosition } from '@/lib/clamp-popup-position'
 import { GlassCard } from './glass-card'
 
@@ -104,23 +105,43 @@ interface SlidingPanelProps {
   className?: string
   style?: React.CSSProperties
   children: ReactNode
+  /**
+   * Optional overrides applied only when the viewport is at/below the mobile
+   * breakpoint — e.g. turning a floating side panel into a full-screen sheet.
+   * When omitted, mobile viewports render identically to desktop (unchanged).
+   */
+  mobilePosition?: React.CSSProperties
+  mobileWidth?: number | string
+  mobileClassName?: string
+  mobileStyle?: React.CSSProperties
+  /** Slide axis to use on mobile only; defaults to `axis` when omitted (desktop unaffected). */
+  mobileAxis?: 'X' | 'Y'
 }
 
 export function SlidingPanel({
   visible, position, axis = 'X', offset = 20,
   zIndex, width, className = '', style, children,
+  mobilePosition, mobileWidth, mobileClassName, mobileStyle, mobileAxis,
 }: SlidingPanelProps) {
+  const isMobile = useIsMobile()
+  const useMobileOverrides = isMobile && (mobilePosition || mobileWidth !== undefined || mobileClassName || mobileStyle || mobileAxis)
+  const effectivePosition = useMobileOverrides && mobilePosition ? mobilePosition : position
+  const effectiveWidth = useMobileOverrides && mobileWidth !== undefined ? mobileWidth : width
+  const effectiveClassName = useMobileOverrides && mobileClassName ? `${className} ${mobileClassName}` : className
+  const effectiveStyle = useMobileOverrides && mobileStyle ? { ...style, ...mobileStyle } : style
+  const effectiveAxis = useMobileOverrides && mobileAxis ? mobileAxis : axis
+
   return (
     <div
-      className={`absolute transition-all duration-300 ${className}`}
+      className={`absolute transition-all duration-300 ${effectiveClassName}`}
       style={{
-        ...position,
+        ...effectivePosition,
         opacity: visible ? 1 : 0,
-        transform: `translate${axis}(${visible ? 0 : offset}px)`,
+        transform: `translate${effectiveAxis}(${visible ? 0 : offset}px)`,
         pointerEvents: visible ? 'auto' : 'none',
         zIndex,
-        width,
-        ...style,
+        width: effectiveWidth,
+        ...effectiveStyle,
       }}
     >
       {children}
