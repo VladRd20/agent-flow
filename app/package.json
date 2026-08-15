@@ -3,7 +3,8 @@
   "version": "0.9.1",
   "description": "Real-time visualization of AI agent orchestration — standalone web app",
   "bin": {
-    "agent-flow": "dist/app.js"
+    "agent-flow": "dist/app.js",
+    "agent-flow-app": "dist/app.js"
   },
   "files": [
     "dist/"

@@ -23,7 +23,7 @@ import {
 import { setLogLevel } from '../extension/src/logger'
 import type { TelemetryClient } from './telemetry'
 
-const MAX_EVENT_BUFFER = 5000
+const MAX_EVENT_BUFFER = 50000
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow')
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects')
 
@@ -403,7 +403,10 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     }
 
     hookServer.onEvent((event: AgentEvent) => {
-      broadcast(JSON.stringify({ type: 'agent-event', event }))
+      // Route through broadcastEvent (not raw broadcast) so hook-sourced
+      // events (tool_call_start/end, subagent_return, agent_complete, etc.)
+      // are buffered like every other event source and survive SSE reconnects.
+      broadcastEvent(event)
     })
 
     writeDiscoveryFile(hookPort, workspace)
@@ -500,16 +503,13 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         sendSSE(res, { type: 'session-list', sessions: sessionList })
       }
 
-      // Replay buffered events for the most recent active session
-      const sorted = [...sessionList].sort((a, b) => {
-        const aActive = a.status === 'active' ? 1 : 0
-        const bActive = b.status === 'active' ? 1 : 0
-        if (aActive !== bActive) return bActive - aActive
-        return b.lastActivityTime - a.lastActivityTime
-      })
-      if (sorted.length > 0) {
-        const buffered = eventBuffer.get(sorted[0].id)
-        if (buffered) {
+      // Replay buffered events for ALL known sessions, not just the most
+      // recently active one — otherwise subagent/session nodes belonging to
+      // other sessions never reappear after a reconnect (page refresh, or
+      // the browser's native EventSource auto-reconnect after a blip).
+      for (const session of sessionList) {
+        const buffered = eventBuffer.get(session.id)
+        if (buffered && buffered.length > 0) {
           sendSSE(res, { type: 'agent-event-batch', events: buffered })
         }
       }

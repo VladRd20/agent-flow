@@ -15,7 +15,7 @@ import { startServer } from './server'
 
 const args = parseArgs(process.argv.slice(2))
 
-console.log('Agent Flow\n')
+console.log('Agent Flow (local fork)\n')
 
 // Ensure hooks are configured
 ensureSetup()
