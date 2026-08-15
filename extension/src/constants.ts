@@ -30,6 +30,16 @@ export const PERMISSION_DETECT_MS = 5000
  *  attach within ~1s of their next message. */
 export const ACTIVE_SESSION_AGE_S = 45 * 60 // 45 minutes
 
+/** How long a completed session stays visible/replayable after going idle
+ *  before the relay prunes it from `sessions`/`eventBuffer` (ms). Without
+ *  this, every session ever watched during the process's lifetime stays in
+ *  the SSE session-list and gets its full event buffer replayed on every
+ *  reconnect, forever. */
+export const SESSION_RETENTION_MS = 2 * 60 * 60 * 1000 // 2 hours
+
+/** How often the relay sweeps for completed sessions past SESSION_RETENTION_MS (ms) */
+export const SESSION_PRUNE_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+
 /** Duration of VS Code status bar messages (ms) */
 export const STATUS_MESSAGE_DURATION_MS = 5000
 
@@ -44,6 +54,11 @@ export const DEFAULT_DEV_PORT = 3002
 
 /** Default SSE relay port (used by dev relay, standalone app, and webview build) */
 export const DEFAULT_RELAY_PORT = 3001
+
+/** Default bind address for the standalone app's HTTP server. Loopback-only
+ *  by default; override via --host for LAN access (no auth exists on this
+ *  server, so this is an explicit opt-in, not a default). */
+export const DEFAULT_APP_HOST = '127.0.0.1'
 
 /** Accept CORS requests from any localhost origin during dev — Next.js falls
  *  back to a higher port when 3000 is taken, so a single hard-coded value

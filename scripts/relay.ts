@@ -19,6 +19,7 @@ import {
   INACTIVITY_TIMEOUT_MS, SCAN_INTERVAL_MS, ACTIVE_SESSION_AGE_S, POLL_FALLBACK_MS,
   SESSION_ID_DISPLAY, SYSTEM_PROMPT_BASE_TOKENS, ORCHESTRATOR_NAME,
   HOOK_SERVER_NOT_STARTED, WORKSPACE_HASH_LENGTH,
+  SESSION_RETENTION_MS, SESSION_PRUNE_INTERVAL_MS,
 } from '../extension/src/constants'
 import { setLogLevel } from '../extension/src/logger'
 import type { TelemetryClient } from './telemetry'
@@ -265,6 +266,26 @@ function readNewLines(sessionId: string) {
   resetInactivityTimer(sessionId)
 }
 
+// Drops sessions that finished (sessionCompleted) more than
+// SESSION_RETENTION_MS ago from `sessions`/`eventBuffer` — otherwise every
+// session ever watched during this process's lifetime stays in the SSE
+// session-list forever and gets its full event buffer replayed on every
+// reconnect. Mirrors the watcher cleanup already done in dispose().
+function pruneOldSessions() {
+  const now = Date.now()
+  for (const [sessionId, session] of sessions) {
+    if (!session.sessionCompleted) continue
+    if (now - session.lastActivityTime < SESSION_RETENTION_MS) continue
+
+    session.fileWatcher?.close()
+    if (session.pollTimer) clearInterval(session.pollTimer)
+    if (session.inactivityTimer) clearTimeout(session.inactivityTimer)
+    sessions.delete(sessionId)
+    eventBuffer.delete(sessionId)
+    log(`[session] Pruned ${sessionId.slice(0, SESSION_ID_DISPLAY)} (idle since completion > ${SESSION_RETENTION_MS}ms)`)
+  }
+}
+
 // ─── Session scanner ────────────────────────────────────────────────────────
 
 function scanForActiveSessions(workspace: string) {
@@ -393,6 +414,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
 
   let hookServer: HookServer | null = null
   let scanInterval: NodeJS.Timeout | null = null
+  let pruneInterval: NodeJS.Timeout | null = null
   let projectDirWatcher: fs.FSWatcher | null = null
 
   if (wantClaude) {
@@ -413,6 +435,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
 
     scanForActiveSessions(workspace)
     scanInterval = setInterval(() => scanForActiveSessions(workspace), SCAN_INTERVAL_MS)
+    pruneInterval = setInterval(pruneOldSessions, SESSION_PRUNE_INTERVAL_MS)
 
     const resolved = (() => { try { return fs.realpathSync(workspace) } catch { return workspace } })()
     const encoded = resolved.replace(/[^a-zA-Z0-9]/g, '-')
@@ -534,6 +557,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         removeDiscoveryFile()
         hookServer?.dispose()
         if (scanInterval) clearInterval(scanInterval)
+        if (pruneInterval) clearInterval(pruneInterval)
         projectDirWatcher?.close()
         for (const session of sessions.values()) {
           session.fileWatcher?.close()

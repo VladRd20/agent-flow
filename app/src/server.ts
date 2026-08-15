@@ -13,13 +13,14 @@ import { serveStatic } from './static'
 
 interface ServerOptions {
   port: number
+  host: string
   openBrowser: boolean
   workspace: string
   verbose?: boolean
 }
 
 export async function startServer(options: ServerOptions) {
-  const { port, openBrowser, workspace } = options
+  const { port, host, openBrowser, workspace } = options
 
   const configDir = path.join(os.homedir(), '.agent-flow')
   const telemetry = createTelemetryClient({
@@ -45,9 +46,9 @@ export async function startServer(options: ServerOptions) {
     res.end('Not found')
   })
 
-  server.listen(port, '127.0.0.1', () => {
-    const url = `http://127.0.0.1:${port}`
-    console.log(`Server running at ${url}`)
+  server.listen(port, host, () => {
+    const url = `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`
+    console.log(`Server running at ${url}${host === '0.0.0.0' ? ' (also reachable on your LAN - no auth is enforced)' : ''}`)
     console.log('Waiting for agent events...\n')
 
     if (openBrowser) {

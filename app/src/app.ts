@@ -23,6 +23,7 @@ ensureSetup()
 // Start the server
 startServer({
   port: args.port,
+  host: args.host,
   openBrowser: args.open,
   workspace: process.cwd(),
   verbose: args.verbose,
