@@ -402,6 +402,7 @@ export class SessionWatcher implements AgentSessionWatcher {
       inactivityTimer: null,
       subagentWatchers: new Map(),
       spawnedSubagents: new Set(),
+      pendingCatchUpSpawns: [],
       inlineProgressAgents: new Set(),
       subagentsDirWatcher: null,
       subagentsDir: null,
@@ -441,6 +442,7 @@ export class SessionWatcher implements AgentSessionWatcher {
       },
     }, sessionId)
     session.sessionDetected = true
+    this.parser.emitPendingSubagentSpawns(session, sessionId)
 
     // Emit initial context breakdown from prescan so the webview shows accumulated tokens
     this.emitContextUpdate(ORCHESTRATOR_NAME, session, sessionId)

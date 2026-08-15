@@ -182,6 +182,11 @@ export interface WatchedSession {
   subagentWatchers: Map<string, SubagentState>
   /** Names of subagents already spawned (by transcript parser or file watcher) — prevents duplicate spawns */
   spawnedSubagents: Set<string>
+  /** Subagents found still-running (no matching tool_result) during prescanExistingContent's
+   *  catch-up scan — populated there, drained by TranscriptParser.emitPendingSubagentSpawns()
+   *  once the caller has broadcast the session's own orchestrator agent_spawn, so children
+   *  never appear in the event buffer before their parent. */
+  pendingCatchUpSpawns: Array<{ childName: string; task: string }>
   /** Subagent names currently receiving inline progress events — file watcher skips these */
   inlineProgressAgents: Set<string>
   subagentsDirWatcher: import('fs').FSWatcher | null

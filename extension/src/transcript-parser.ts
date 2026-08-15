@@ -430,6 +430,15 @@ export class TranscriptParser {
   prescanExistingContent(filePath: string, size: number, session: WatchedSession): TranscriptEntry[] {
     if (size === 0) { return [] }
     const catchUpEntries: TranscriptEntry[] = []
+    // Task/Agent tool_use blocks seen during this scan whose matching
+    // tool_result hasn't been seen yet (still running as of catch-up time).
+    // Only entries still pending at the end of the scan get a real spawn
+    // emitted below — a fresh relay process has never shown these to any
+    // client, so marking them "already spawned" here (as this used to do
+    // unconditionally) permanently hid still-running subagents from the UI
+    // after every relay restart, even though their tool_call_start events
+    // kept flowing in fine via inline progress / the subagent file watcher.
+    const pendingSubagentSpawns = new Map<string, { childName: string; task: string }>()
     try {
       // Read only up to `size` bytes — the file may have grown since stat.
       // Reading beyond would add tool_use IDs to the dedup set that haven't
@@ -450,8 +459,12 @@ export class TranscriptParser {
                 // and handleToolResult can resolve the child name on completion
                 if (toolBlock.name === 'Agent' || toolBlock.name === 'Task') {
                   const childName = resolveSubagentChildName(toolBlock.input)
-                  session.spawnedSubagents.add(childName)
                   this.subagentChildNames.set(toolBlock.id, childName)
+                  // Not marked spawnedSubagents yet — only once we know (via a
+                  // matching tool_result below, or by staying unmatched to the
+                  // end of this scan) whether it already completed in history
+                  // or is still running and needs a fresh spawn emitted.
+                  pendingSubagentSpawns.set(toolBlock.id, { childName, task: summarizeInput(toolBlock.name, toolBlock.input) })
                 }
                 // Track pending tool calls so handleToolResult works after reconnect
                 const args = summarizeInput(toolBlock.name, toolBlock.input)
@@ -463,6 +476,13 @@ export class TranscriptParser {
                 // Clear matched pending tool call
                 if (resultBlock.tool_use_id) {
                   session.pendingToolCalls.delete(resultBlock.tool_use_id)
+                  // Task/Agent completed within the pre-scanned history — mark
+                  // its name known so no live path re-spawns a node for it.
+                  const pendingSpawn = pendingSubagentSpawns.get(resultBlock.tool_use_id)
+                  if (pendingSpawn) {
+                    session.spawnedSubagents.add(pendingSpawn.childName)
+                    pendingSubagentSpawns.delete(resultBlock.tool_use_id)
+                  }
                 }
                 // Accumulate tool result tokens
                 session.contextBreakdown.toolResults += estimateTokensFromContent(resultBlock.content)
@@ -504,6 +524,19 @@ export class TranscriptParser {
         } catch (err) { log.debug('Skipping unparseable transcript line:', err) }
       }
       log.info(`Pre-scanned ${session.seenToolUseIds.size} existing tool_use IDs, ${catchUpEntries.length} entries total`)
+
+      // Anything still in pendingSubagentSpawns never got a matching
+      // tool_result in the pre-scanned history — it was actively running at
+      // catch-up time. This process has never shown it to a client, so it
+      // needs a real spawn — queued here rather than emitted immediately
+      // since the session's own orchestrator agent_spawn hasn't broadcast
+      // yet at this point in the caller (watchSession); see
+      // emitPendingSubagentSpawns(), called once that has happened.
+      for (const { childName, task } of pendingSubagentSpawns.values()) {
+        if (session.spawnedSubagents.has(childName)) continue
+        session.spawnedSubagents.add(childName)
+        session.pendingCatchUpSpawns.push({ childName, task })
+      }
 
       return catchUpEntries
     } catch (err) {
@@ -555,6 +588,17 @@ export class TranscriptParser {
         }
       }
     }
+  }
+
+  /** Emit spawn events for subagents prescanExistingContent found still-running.
+   *  Call once the session's own orchestrator agent_spawn has been broadcast,
+   *  so these never appear in the event buffer before their parent exists. */
+  emitPendingSubagentSpawns(session: WatchedSession, sessionId: string): void {
+    if (session.pendingCatchUpSpawns.length === 0) return
+    for (const { childName, task } of session.pendingCatchUpSpawns) {
+      emitSubagentSpawn(this.delegate, ORCHESTRATOR_NAME, childName, task, sessionId)
+    }
+    session.pendingCatchUpSpawns = []
   }
 
   /** Extract a human-readable label from the first user message in transcript entries */

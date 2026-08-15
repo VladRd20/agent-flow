@@ -205,6 +205,7 @@ function watchSession(sessionId: string, filePath: string) {
     inactivityTimer: null,
     subagentWatchers: new Map(),
     spawnedSubagents: new Set(),
+    pendingCatchUpSpawns: [],
     inlineProgressAgents: new Set(),
     subagentsDirWatcher: null, subagentsDir: null,
     label: defaultLabel, labelSet: false,
@@ -227,6 +228,7 @@ function watchSession(sessionId: string, filePath: string) {
     sessionId,
   })
   session.sessionDetected = true
+  parser.emitPendingSubagentSpawns(session, sessionId)
 
   emitContextUpdate(ORCHESTRATOR_NAME, session, sessionId)
   parser.emitCatchUpEntries(catchUpEntries, session, sessionId)
