@@ -285,13 +285,43 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
 
   useEffect(() => {
     const loop = (timestamp: number) => animateRef.current(timestamp)
-    if (state.isPlaying) {
-      lastTimeRef.current = 0
-      animationRef.current = requestAnimationFrame(loop)
-    } else if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current)
+    let hiddenIntervalId: ReturnType<typeof setInterval> | null = null
+
+    const stopAll = () => {
+      if (animationRef.current) { cancelAnimationFrame(animationRef.current); animationRef.current = 0 }
+      if (hiddenIntervalId) { clearInterval(hiddenIntervalId); hiddenIntervalId = null }
     }
-    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current) }
+
+    // rAF is throttled or fully suspended by browsers on hidden/backgrounded
+    // tabs. If we relied on it alone, external events (agent spawn, dispatch,
+    // complete) would keep arriving but never get processed — agents would
+    // stay invisible (opacity stuck at 0) until the tab regains focus, at
+    // which point rAF resumes and rapidly replays the backlog, making an
+    // agent appear to "pop in" already complete. A low-rate interval keeps
+    // the simulation ticking (and events draining) while hidden.
+    const startForVisibility = () => {
+      stopAll()
+      lastTimeRef.current = 0
+      if (typeof document !== 'undefined' && document.hidden) {
+        hiddenIntervalId = setInterval(() => animateRef.current(performance.now()), ANIM_SPEED.hiddenTabTickInterval)
+      } else {
+        animationRef.current = requestAnimationFrame(loop)
+      }
+    }
+
+    if (!state.isPlaying) {
+      stopAll()
+      return
+    }
+
+    startForVisibility()
+    const onVisibilityChange = () => { if (state.isPlaying) startForVisibility() }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      stopAll()
+    }
   }, [state.isPlaying])
 
   // ─── Playback controls ───────────────────────────────────────────────────

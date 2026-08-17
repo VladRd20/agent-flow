@@ -113,6 +113,14 @@ export const ANIM_SPEED = {
   defaultDeltaTime: 0.016,
   /** Minimum ms between frames (60fps cap, with 1ms slack for timing jitter) */
   minFrameInterval: (1000 / 60) - 1,
+  /**
+   * Tick interval (ms) used to drive the simulation loop while the tab is
+   * backgrounded. Browsers throttle/suspend requestAnimationFrame for hidden
+   * tabs, which would otherwise stall event processing entirely — agents
+   * spawned while the tab is hidden would never fade in, and only "pop"
+   * into their final state once the tab regains focus and rAF catches up.
+   */
+  hiddenTabTickInterval: 500,
 } as const
 
 // ─── UI panel constants ─────────────────────────────────────────────────────
