@@ -70,6 +70,15 @@ export function handleAgentSpawn(
 
       x = parent.x + Math.cos(angle) * AGENT_SPAWN_DISTANCE
       y = parent.y + Math.sin(angle) * AGENT_SPAWN_DISTANCE
+    } else {
+      // parentId was given but that agent isn't in state yet (event-ordering
+      // race) - falling through to the x=0,y=0 default would place this node
+      // at world origin, potentially far from the rest of the graph. Anchor
+      // near the orchestrator instead, if one exists, so it at least lands
+      // somewhere sane once it fades in.
+      for (const a of state.agents.values()) {
+        if (a.isMain) { x = a.x; y = a.y; break }
+      }
     }
   }
 

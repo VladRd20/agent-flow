@@ -102,6 +102,12 @@ export function useCanvasCamera({
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
     for (const [id, agent] of agents) {
       if (focusScope && !focusScope.has(id)) continue
+      // Not faded in yet (just spawned) - exclude from the fit bbox, same as
+      // the opacity guard already applied to toolCalls/discoveries below.
+      // Otherwise a brand-new node (opacity 0, possibly at a not-yet-correct
+      // position) can force an extreme fit on the very next frame, shrinking
+      // every already-visible node to sub-pixel until it fades in/settles.
+      if (agent.opacity <= 0.1) continue
       const r = (agent.isMain ? NODE.radiusMain : NODE.radiusSub) + AUTOFIT_AGENT_PADDING
       minX = Math.min(minX, agent.x - r)
       maxX = Math.max(maxX, agent.x + r)
