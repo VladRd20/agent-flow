@@ -149,6 +149,14 @@ export interface PendingToolCall {
   args: string
   filePath?: string
   startTime: number
+  /** The tool_use block's `id` from the transcript (same id Claude's tool-call
+   *  protocol uses to pair tool_use/tool_result blocks) — the exact per-call
+   *  identifier. Forwarded onto emitted tool_call_start/tool_call_end events
+   *  as `tool_use_id` so downstream consumers can match calls exactly instead
+   *  of relying on agent+toolName+args heuristics. Optional because some
+   *  event sources (e.g. hook payloads on older Claude Code versions) may not
+   *  carry it. */
+  toolUseId?: string
 }
 
 // ─── Session Types ──────────────────────────────────────────────────────────
