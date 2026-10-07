@@ -12,10 +12,11 @@
     "build:webview": "pnpm --filter agent-flow-web run build:webview",
     "build:all": "pnpm run build:webview && pnpm run build:extension",
     "build:app": "node app/build.js",
-    "test": "node --import tsx --test \"scripts/**/*.test.ts\" \"app/src/**/*.test.ts\" \"web/**/*.test.ts\""
+    "test": "cross-env TSX_TSCONFIG_PATH=web/tsconfig.json node --import tsx --test \"scripts/**/*.test.ts\" \"app/src/**/*.test.ts\" \"web/**/*.test.ts\""
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "esbuild": "^0.20.2",
     "tsx": "^4.21.0"
   }

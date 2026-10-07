@@ -1,5 +1,6 @@
 import { COLORS } from '@/lib/colors'
 import { TOOL_DEDUP_WINDOW_S } from '@/lib/canvas-constants'
+import type { ToolCallNode } from '@/lib/agent-types'
 import { pushTimelineBlock, type ProcessEventContext, type MutableEventState } from './process-event'
 import { appendConversation, asString, asBoolean, LABEL_LEN_PARTICLE, LABEL_LEN_TIMELINE } from './types'
 
@@ -23,12 +24,20 @@ export function handleToolCallStart(
 
   if (agent) {
     // Dedup: skip if there's already a running tool call for the same agent+tool
-    // created within the last 3 seconds (race between Hook Server and Session Watcher)
+    // +args/file created within the last 3 seconds (race between Hook Server and
+    // Session Watcher reporting the same real call twice). Matching on args/file
+    // too (not just agent+tool) is required so that two genuinely distinct
+    // concurrent calls to the same tool (e.g. parallel `Read` on different
+    // files) don't get one of them silently dropped here.
+    const newFilePath = extractFilePath(inputData, args)
     let isDuplicate = false
     for (const tc of state.toolCalls.values()) {
       if (tc.agentId === agentName && tc.toolName === toolName && tc.state === 'running' && (currentTime - tc.startTime) < TOOL_DEDUP_WINDOW_S) {
-        isDuplicate = true
-        break
+        const tcFilePath = extractFilePath(tc.inputData, tc.args)
+        if (tcFilePath === newFilePath && tc.args === args) {
+          isDuplicate = true
+          break
+        }
       }
     }
     if (isDuplicate) return
@@ -117,9 +126,16 @@ export function handleToolCallEnd(
     })
 
     const toolState: 'error' | 'complete' = isError ? 'error' : 'complete'
+    // Track which tool call this end event actually completed, so the
+    // file-attention token cost below is attributed to THAT call, not to
+    // whichever same-agent+same-tool call happens to be first in the map
+    // (which, without a call id in the payload, could be a much older,
+    // already-completed call for the same tool).
+    let completedTc: ToolCallNode | undefined
     for (const [id, tc] of state.toolCalls) {
       if (tc.agentId === agentName && tc.toolName === toolName && tc.state === 'running') {
-        state.toolCalls.set(id, { ...tc, state: toolState, completeTime: currentTime, result, tokenCost, errorMessage: isError ? (errorMessage || result) : undefined })
+        completedTc = { ...tc, state: toolState, completeTime: currentTime, result, tokenCost, errorMessage: isError ? (errorMessage || result) : undefined }
+        state.toolCalls.set(id, completedTc)
 
         const edgeId = `edge-${id}`
         // Snap any still-traveling outgoing particle to the end
@@ -150,10 +166,10 @@ export function handleToolCallEnd(
       pushTimelineBlock(entry, currentTime, { type: 'thinking', label: 'Thinking...', color: COLORS.thinking }, ctx)
     }
 
-    // File attention token cost
+    // File attention token cost — attribute to the call we just completed above,
+    // not to an arbitrary same-agent+same-tool call (see completedTc comment).
     if (tokenCost) {
-      const matchedTc = Array.from(state.toolCalls.values()).find(tc => tc.agentId === agentName && tc.toolName === toolName)
-      const filePath = extractFilePath(matchedTc?.inputData, matchedTc?.args)
+      const filePath = extractFilePath(completedTc?.inputData, completedTc?.args)
       if (filePath) {
         const existing = state.fileAttention.get(filePath)
         if (existing) {
