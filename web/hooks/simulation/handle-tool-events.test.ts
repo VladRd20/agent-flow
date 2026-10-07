@@ -73,6 +73,32 @@ test('a literal duplicate report of the same call (same agent/tool/args) within 
   assert.equal(running.length, 1, 'the second, identical report should still be deduped')
 })
 
+test('two truly-concurrent same-tool-name calls by the same agent are disambiguated exactly via tool_use_id, even when args/file are identical (the args-matching heuristic cannot guarantee this)', () => {
+  const state = makeState('agent-1')
+  const ctx = makeContext()
+
+  // Two genuinely concurrent calls to the same tool, same agent, IDENTICAL
+  // args/file — the old heuristic (agent+tool+args/file) cannot tell these
+  // apart at all. With real tool_use_ids (as Claude's own tool-call protocol
+  // assigns per invocation) they're exact.
+  handleToolCallStart({ agent: 'agent-1', tool: 'Bash', args: 'npm test', tool_use_id: 'toolu_AAA' }, 10, state, ctx)
+  handleToolCallStart({ agent: 'agent-1', tool: 'Bash', args: 'npm test', tool_use_id: 'toolu_BBB' }, 10.1, state, ctx)
+
+  const running = Array.from(state.toolCalls.values()).filter(tc => tc.state === 'running')
+  assert.equal(running.length, 2, 'both concurrent calls should produce distinct tool call nodes despite identical args')
+
+  // Complete them out of start order, each identified only by its tool_use_id.
+  handleToolCallEnd({ agent: 'agent-1', tool: 'Bash', result: 'ok-B', tokenCost: 200, tool_use_id: 'toolu_BBB' }, 15, state, ctx)
+  handleToolCallEnd({ agent: 'agent-1', tool: 'Bash', result: 'ok-A', tokenCost: 100, tool_use_id: 'toolu_AAA' }, 16, state, ctx)
+
+  const byToolUseId = new Map(Array.from(state.toolCalls.values()).map(tc => [tc.toolUseId, tc]))
+  assert.equal(byToolUseId.get('toolu_AAA')?.result, 'ok-A')
+  assert.equal(byToolUseId.get('toolu_AAA')?.tokenCost, 100)
+  assert.equal(byToolUseId.get('toolu_BBB')?.result, 'ok-B')
+  assert.equal(byToolUseId.get('toolu_BBB')?.tokenCost, 200)
+  assert.ok(Array.from(state.toolCalls.values()).every(tc => tc.state === 'complete'), 'both calls should be independently completed')
+})
+
 test('tool_call_end attributes token cost to the call that actually just completed, not an older already-complete same-name call (bug: previously picked the first same agent+tool match in Map order, regardless of running state)', () => {
   const state = makeState('agent-1')
   const ctx = makeContext()

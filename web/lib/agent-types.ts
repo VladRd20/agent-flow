@@ -68,6 +68,12 @@ export interface ToolCallNode {
   tokenCost?: number    // how many tokens this result consumed
   inputData?: Record<string, unknown>  // rich tool input (diffs, todos, commands)
   errorMessage?: string // error description when state === 'error'
+  /** The transcript's tool_use block id (same id pairing tool_use/tool_result
+   *  in Claude's protocol), when the emitting event carried one. This is the
+   *  exact per-call identifier — prefer it over agent+toolName+args matching
+   *  whenever present. Optional for backward compat with events/payloads that
+   *  don't carry it. */
+  toolUseId?: string
   x: number
   y: number
   startTime: number

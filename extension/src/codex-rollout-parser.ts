@@ -413,6 +413,7 @@ export class CodexRolloutParser {
         args: argsSummary,
         preview: `${name}: ${argsSummary}`.slice(0, PREVIEW_MAX),
         inputData: extractInputData(name, args ?? {}),
+        tool_use_id: callId,
       },
     })
   }
@@ -440,6 +441,7 @@ export class CodexRolloutParser {
         tool: pending.name,
         result: resultSummary,
         tokenCost,
+        tool_use_id: callId,
         ...(isError ? { isError: true, errorMessage: resultSummary } : {}),
         ...(discovery ? { discovery } : {}),
       },
@@ -470,6 +472,7 @@ export class CodexRolloutParser {
         args: argsSummary,
         preview: `${name}: ${argsSummary}`.slice(0, PREVIEW_MAX),
         inputData: extractInputData(name, { patch: rawInput }),
+        tool_use_id: callId,
       },
     })
   }
