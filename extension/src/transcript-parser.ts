@@ -280,6 +280,7 @@ export class TranscriptParser {
       args,
       filePath,
       startTime: Date.now(),
+      toolUseId: block.id,
     })
 
     // Check if this is a subagent call (Task in older Claude Code, Agent in newer versions)
@@ -303,6 +304,7 @@ export class TranscriptParser {
         args,
         preview: `${toolName}: ${args}`.slice(0, PREVIEW_MAX),
         inputData: extractInputData(toolName, block.input),
+        tool_use_id: block.id,
       },
     }, sessionId)
   }
@@ -367,6 +369,7 @@ export class TranscriptParser {
         tool: toolName,
         result: result.slice(0, RESULT_MAX),
         tokenCost,
+        tool_use_id: block.tool_use_id,
         ...(discovery ? { discovery } : {}),
         ...(isError ? { isError, errorMessage } : {}),
       },
