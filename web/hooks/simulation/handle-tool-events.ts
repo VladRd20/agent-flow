@@ -20,24 +20,35 @@ export function handleToolCallStart(
   const args = asString(payload.args)
   const inputData = (payload.inputData && typeof payload.inputData === 'object' && !Array.isArray(payload.inputData))
     ? payload.inputData as Record<string, unknown> : undefined
+  // The transcript's tool_use block id — the exact per-call identifier Claude's
+  // own protocol assigns (same id pairing tool_use/tool_result). When present
+  // this is the primary matching key; the agent+toolName+args heuristic below
+  // is only a fallback for event sources that don't carry it.
+  const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined
   const agent = state.agents.get(agentName)
 
   if (agent) {
-    // Dedup: skip if there's already a running tool call for the same agent+tool
-    // +args/file created within the last 3 seconds (race between Hook Server and
-    // Session Watcher reporting the same real call twice). Matching on args/file
-    // too (not just agent+tool) is required so that two genuinely distinct
-    // concurrent calls to the same tool (e.g. parallel `Read` on different
-    // files) don't get one of them silently dropped here.
+    // Dedup: skip if there's already a running tool call that is exactly the
+    // same real call. With a tool_use_id, this is exact: any other running
+    // call carrying the identical id IS the same call (a race between Hook
+    // Server and Session Watcher reporting it twice). Without one (older
+    // transcript formats), fall back to the agent+tool+args/file heuristic —
+    // matching on args/file too (not just agent+tool) is required so that two
+    // genuinely distinct concurrent calls to the same tool (e.g. parallel
+    // `Read` on different files) don't get one of them silently dropped here.
     const newFilePath = extractFilePath(inputData, args)
     let isDuplicate = false
     for (const tc of state.toolCalls.values()) {
-      if (tc.agentId === agentName && tc.toolName === toolName && tc.state === 'running' && (currentTime - tc.startTime) < TOOL_DEDUP_WINDOW_S) {
-        const tcFilePath = extractFilePath(tc.inputData, tc.args)
-        if (tcFilePath === newFilePath && tc.args === args) {
-          isDuplicate = true
-          break
-        }
+      if (tc.agentId !== agentName || tc.toolName !== toolName || tc.state !== 'running') continue
+      if ((currentTime - tc.startTime) >= TOOL_DEDUP_WINDOW_S) continue
+      if (toolUseId && tc.toolUseId) {
+        if (tc.toolUseId === toolUseId) { isDuplicate = true; break }
+        continue
+      }
+      const tcFilePath = extractFilePath(tc.inputData, tc.args)
+      if (tcFilePath === newFilePath && tc.args === args) {
+        isDuplicate = true
+        break
       }
     }
     if (isDuplicate) return
@@ -62,6 +73,7 @@ export function handleToolCallStart(
       y: pos.y,
       startTime: currentTime,
       opacity: 0,
+      toolUseId,
     })
 
     state.edges.push({ id: `edge-${toolId}`, from: agentName, to: toolId, type: 'tool', opacity: 0 })
@@ -115,6 +127,7 @@ export function handleToolCallEnd(
   const tokenCost = typeof payload.tokenCost === 'number' ? payload.tokenCost : undefined
   const isError = asBoolean(payload.isError)
   const errorMessage = typeof payload.errorMessage === 'string' ? payload.errorMessage : undefined
+  const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : undefined
   const agent = state.agents.get(agentName)
 
   if (agent) {
@@ -128,29 +141,47 @@ export function handleToolCallEnd(
     const toolState: 'error' | 'complete' = isError ? 'error' : 'complete'
     // Track which tool call this end event actually completed, so the
     // file-attention token cost below is attributed to THAT call, not to
-    // whichever same-agent+same-tool call happens to be first in the map
-    // (which, without a call id in the payload, could be a much older,
-    // already-completed call for the same tool).
+    // whichever same-agent+same-tool call happens to be first in the map.
+    // With a tool_use_id this is exact — it's the same id the transcript used
+    // to pair this tool_result with its tool_use. Without one (older event
+    // sources), fall back to the first running same-agent+same-tool call,
+    // which could be a much older, already-completed call for the same tool
+    // if two truly-concurrent same-tool calls are in flight.
     let completedTc: ToolCallNode | undefined
-    for (const [id, tc] of state.toolCalls) {
-      if (tc.agentId === agentName && tc.toolName === toolName && tc.state === 'running') {
-        completedTc = { ...tc, state: toolState, completeTime: currentTime, result, tokenCost, errorMessage: isError ? (errorMessage || result) : undefined }
-        state.toolCalls.set(id, completedTc)
-
-        const edgeId = `edge-${id}`
-        // Snap any still-traveling outgoing particle to the end
-        const outIdx = state.particles.findIndex(p => p.edgeId === edgeId && p.type === 'tool_call')
-        if (outIdx !== -1) state.particles[outIdx] = { ...state.particles[outIdx], progress: 0.95 }
-
-        state.particles.push({
-          id: `p-tr-${currentTime}-${id}`,
-          edgeId, progress: 1,
-          type: 'tool_return', color: COLORS.return,
-          size: 4, trailLength: 0.15,
-          label: result.slice(0, LABEL_LEN_PARTICLE),
-        })
-        break
+    let completedId: string | undefined
+    if (toolUseId) {
+      for (const [id, tc] of state.toolCalls) {
+        if (tc.toolUseId === toolUseId && tc.state === 'running') {
+          completedId = id
+          break
+        }
       }
+    }
+    if (!completedId) {
+      for (const [id, tc] of state.toolCalls) {
+        if (tc.agentId === agentName && tc.toolName === toolName && tc.state === 'running' && !tc.toolUseId) {
+          completedId = id
+          break
+        }
+      }
+    }
+    if (completedId) {
+      const tc = state.toolCalls.get(completedId)!
+      completedTc = { ...tc, state: toolState, completeTime: currentTime, result, tokenCost, errorMessage: isError ? (errorMessage || result) : undefined }
+      state.toolCalls.set(completedId, completedTc)
+
+      const edgeId = `edge-${completedId}`
+      // Snap any still-traveling outgoing particle to the end
+      const outIdx = state.particles.findIndex(p => p.edgeId === edgeId && p.type === 'tool_call')
+      if (outIdx !== -1) state.particles[outIdx] = { ...state.particles[outIdx], progress: 0.95 }
+
+      state.particles.push({
+        id: `p-tr-${currentTime}-${completedId}`,
+        edgeId, progress: 1,
+        type: 'tool_return', color: COLORS.return,
+        size: 4, trailLength: 0.15,
+        label: result.slice(0, LABEL_LEN_PARTICLE),
+      })
     }
 
     // Timeline block end
