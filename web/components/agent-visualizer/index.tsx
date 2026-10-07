@@ -32,8 +32,6 @@ export function AgentVisualizer() {
     frameRef,
     agents,
     toolCalls,
-    particles,
-    edges,
     discoveries,
     fileAttention,
     timelineEntries,

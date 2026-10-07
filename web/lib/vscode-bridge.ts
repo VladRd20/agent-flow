@@ -166,16 +166,6 @@ class VSCodeBridge {
     this.initListeners = []
   }
 
-  dispose(): void {
-    if (typeof window !== 'undefined') {
-      window.removeEventListener('message', this.handleMessage)
-    }
-    this.initListeners = []
-    this.eventListeners = []
-    this.statusListeners = []
-    this.configListeners = []
-    this.sessionListeners = []
-  }
 }
 
 // Singleton — safe to import from anywhere

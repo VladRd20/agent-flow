@@ -115,7 +115,6 @@ function cleanupFaded(
   }
 
   // Remove orphaned edges whose endpoints no longer exist
-  const beforeLen = filteredEdges.length
   filteredEdges = filteredEdges.filter(e => {
     const fromExists = newAgents.has(e.from)
     if (!fromExists) return false
