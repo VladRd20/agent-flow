@@ -112,6 +112,15 @@ You can also point Agent Flow at a JSONL event log file:
 
 ## Development
 
+This is a pnpm workspace (`pnpm-workspace.yaml` lists `extension` and `web`; `app` and `scripts` are plain TypeScript consumed directly via `tsx`/`esbuild`, not pnpm packages):
+
+| Directory | What it is |
+|-----------|------------|
+| `extension/` | The VS Code extension — watches Claude Code/Codex session files and hook events, forwards them to the webview over `postMessage`. |
+| `web/` | The Next.js UI (the agent graph visualizer). Builds two ways: as the extension's webview bundle (`build:webview`), and as the standalone web app served by `app/`. |
+| `app/` | Thin standalone server (`agent-flow`/`agent-flow-app` CLI) that serves the built `web/` webview bundle and runs the same event relay over SSE instead of VS Code `postMessage`. |
+| `scripts/` | Shared Node/TS tooling: `relay.ts` (the SSE event relay used by both `dev:relay` and `app/`), `telemetry.ts`, build/setup scripts. `relay.ts` imports directly from `extension/src` — the relay and the extension share session-watching logic rather than duplicating it. |
+
 ```bash
 pnpm i              # install dependencies for all packages
 pnpm run setup      # configure Claude Code hooks (one-time)

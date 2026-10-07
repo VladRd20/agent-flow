@@ -156,6 +156,10 @@ export interface PendingToolCall {
 export interface SubagentState {
   watcher: import('fs').FSWatcher | null
   fileSize: number
+  /** Trailing partial line from the last readNewFileLines() call — must be
+   *  forwarded back in, or a JSONL line split across two reads is silently
+   *  dropped (see fs-utils.ts and its regression-guard test). */
+  fileTail: string
   agentName: string
   pendingToolCalls: Map<string, PendingToolCall>
   seenToolUseIds: Set<string>
@@ -171,6 +175,10 @@ export interface WatchedSession {
   fileWatcher: import('fs').FSWatcher | null
   pollTimer: NodeJS.Timeout | null
   fileSize: number
+  /** Trailing partial line from the last readNewFileLines() call — must be
+   *  forwarded back in, or a JSONL line split across two reads is silently
+   *  dropped (see fs-utils.ts and its regression-guard test). */
+  fileTail: string
   sessionStartTime: number
   pendingToolCalls: Map<string, PendingToolCall>
   seenToolUseIds: Set<string>
