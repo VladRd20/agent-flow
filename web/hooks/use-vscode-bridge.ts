@@ -3,6 +3,16 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { vscodeBridge, type ConnectionStatus, type AgentEvent, type SessionInfo } from '@/lib/vscode-bridge'
 import { SimulationEvent } from '@/lib/agent-types'
+import { pushCapped } from '@/lib/capped-buffer'
+
+/** Max events kept in the per-session replay buffer (oldest are dropped).
+ *  Matches MAX_EVENT_BUFFER in scripts/relay.ts — without this cap a
+ *  long-running/high-volume session grows this array for the life of the page.
+ *  Kept high (rather than matching the tighter MAX_EVENT_LOG) because trimming
+ *  from the front would also invalidate any `fromIndex` bookmark a caller saved
+ *  via getSessionEventCount() before the trim — at this size that's not a
+ *  realistic concern for a single session. */
+const MAX_SESSION_EVENT_BUFFER = 50_000
 
 interface BridgeHookResult {
   isVSCode: boolean
@@ -51,7 +61,6 @@ export function useVSCodeBridge(): BridgeHookResult {
   )
   const [disable1MContext, setDisable1MContext] = useState(false)
   const pendingEventsRef = useRef<SimulationEvent[]>([])
-  const [, setEventVersion] = useState(0) // trigger re-render on new events
 
   // Session state
   const [sessions, setSessions] = useState<SessionInfo[]>([])
@@ -119,20 +128,27 @@ export function useVSCodeBridge(): BridgeHookResult {
         sessionId: event.sessionId,
       }
 
-      // Always buffer by session (for replay on session switch)
+      // Always buffer by session (for replay on session switch).
+      // Capped the same way the simulation's own eventLog is capped (MAX_EVENT_LOG)
+      // so a long-running/high-volume session doesn't grow this forever.
       if (event.sessionId) {
         const buf = sessionEventsRef.current.get(event.sessionId) || []
-        buf.push(simEvent)
+        pushCapped(buf, simEvent, MAX_SESSION_EVENT_BUFFER)
         sessionEventsRef.current.set(event.sessionId, buf)
       }
 
       // Deliver to pending if session matches (ref is always current).
       // Skip if a session switch is pending — useLayoutEffect will flush
       // from the session buffer once the simulation state is swapped.
+      // Note: no render-trigger state update here — pendingEventsRef is a
+      // stable array mutated in place, and the simulation's animation loop
+      // (use-agent-simulation.ts) free-polls it every frame via closure and
+      // throttles its own UI-facing setState to ~4/sec. Triggering a React
+      // render on every single event here would re-render the whole tree at
+      // event-arrival rate instead, defeating that throttle.
       const selected = selectedSessionIdRef.current
       if (selected && event.sessionId === selected && !sessionSwitchPendingRef.current) {
         pendingEventsRef.current.push(simEvent)
-        setEventVersion(v => v + 1)
       } else if (event.sessionId && event.sessionId !== selected) {
         // Track background activity for unselected sessions
         setSessionsWithActivity(prev => {
@@ -179,7 +195,6 @@ export function useVSCodeBridge(): BridgeHookResult {
         sessionEventsRef.current.clear()
         setSessionsWithActivity(new Set())
         dismissedSessionsRef.current.clear()
-        setEventVersion(v => v + 1)
         return
       }
       if (type === 'list') {
@@ -272,7 +287,6 @@ export function useVSCodeBridge(): BridgeHookResult {
     const buffered = sessionEventsRef.current.get(sessionId) || []
     pendingEventsRef.current.length = 0
     pendingEventsRef.current.push(...buffered.slice(fromIndex))
-    setEventVersion(v => v + 1)
   }, [])
 
   const getSessionEventCount = useCallback((sessionId: string): number => {
@@ -293,6 +307,12 @@ export function useVSCodeBridge(): BridgeHookResult {
       next.delete(sessionId)
       return next
     })
+    // Drop the closed session's replay buffer — it's not reachable via the UI
+    // until new events re-add it (see "Re-add dismissed sessions" above), at
+    // which point it starts a fresh buffer. Otherwise a long-lived page with
+    // many opened/closed sessions keeps every closed session's full event
+    // history in memory forever.
+    sessionEventsRef.current.delete(sessionId)
   }, [])
 
   const bridgeOpenFile = useCallback((filePath: string, line?: number) => {
