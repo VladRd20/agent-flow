@@ -250,6 +250,11 @@ export function useCanvasInteraction({
       panVelocityRef.current = { vx: 0, vy: 0, active: false }
       setIsDragging(false)
       dragTargetRef.current = null
+      // A second finger touching down while an agent-drag was in progress
+      // must stop that drag — otherwise updateDragLerp (called unconditionally
+      // every draw frame) keeps lerping the dragged agent toward its last
+      // target for the rest of the pinch gesture while the user is zooming.
+      dragLerpRef.current = null
       return
     }
     const t = e.touches[0]

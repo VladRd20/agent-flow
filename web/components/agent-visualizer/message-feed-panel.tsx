@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { Agent, Z, type AgentState } from '@/lib/agent-types'
+import { Agent, Z } from '@/lib/agent-types'
 import { COLORS, ROLE_COLORS, getStateColor } from '@/lib/colors'
 import type { ConversationMessage } from '@/hooks/simulation/types'
 import { useClickOutside } from '@/hooks/use-click-outside'
@@ -285,7 +285,6 @@ export function MessageFeedPanel({
                   >
                     <MessageRow
                       message={msg}
-                      agentId={msg.agentId}
                       agentName={agents.get(msg.agentId)?.name ?? msg.agentId}
                       showAgent={activeTab === 'all'}
                       isSelected={selectedAgentId === msg.agentId}
@@ -335,9 +334,8 @@ function TabButton({ label, active, onClick, color, hasUnread }: {
 
 // ── Message Row ──
 
-function MessageRow({ message, agentId, agentName, showAgent, isSelected, onClick, runtime }: {
+function MessageRow({ message, agentName, showAgent, isSelected, onClick, runtime }: {
   message: ConversationMessage
-  agentId: string
   agentName: string
   showAgent: boolean
   isSelected: boolean

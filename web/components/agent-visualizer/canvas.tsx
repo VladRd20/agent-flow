@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Agent, Particle, Edge, Discovery, DepthParticle } from '@/lib/agent-types'
+import { Particle, Edge, DepthParticle } from '@/lib/agent-types'
 import type { SimulationState } from '@/hooks/simulation/types'
 import { getStateColor } from '@/lib/colors'
 import { ANIM_SPEED, PERF_OVERLAY, PERF_OVERLAY_ENABLED } from '@/lib/canvas-constants'

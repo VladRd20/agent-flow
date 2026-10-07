@@ -32,8 +32,6 @@ export function AgentVisualizer() {
     frameRef,
     agents,
     toolCalls,
-    particles,
-    edges,
     discoveries,
     fileAttention,
     timelineEntries,
@@ -248,11 +246,16 @@ export function AgentVisualizer() {
         bridge.selectSession(remaining[remaining.length - 1].id)
       }
     }
-  }, [bridge])
+    // Deps list the specific fields/functions actually read above, not the
+    // whole `bridge` object — useVSCodeBridge() returns a new object literal
+    // every render, so depending on `bridge` itself recreated this callback
+    // (and the TopBar prop it's passed to) on every render, defeating
+    // TopBar's memo().
+  }, [bridge.removeSession, bridge.selectedSessionId, bridge.sessions, bridge.selectSession])
 
   const openFile = useCallback((filePath: string, line?: number) => {
     bridge.bridgeOpenFile(filePath, line)
-  }, [bridge])
+  }, [bridge.bridgeOpenFile])
 
   const isEmpty = agents.size === 0 && !bridge.useMockData
 

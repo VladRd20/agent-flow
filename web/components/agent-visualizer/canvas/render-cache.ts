@@ -3,6 +3,12 @@
 // Avoids creating CanvasGradient objects every frame.
 
 const glowSpriteCache = new Map<string, HTMLCanvasElement>()
+// Defensive cap, matching textWidthCache below. Growth is normally bounded
+// per agent/color/alpha/radius combination (radius is quantized to an
+// integer pixel before being used as part of the key), but a very long-
+// running or high-churn session can still accumulate many distinct
+// combinations over time, and each entry is an offscreen canvas.
+const GLOW_SPRITE_CACHE_MAX = 500
 
 /** Simple radial glow: gradient from center (innerAlpha) to edge (outerAlpha) */
 export function getGlowSprite(
@@ -24,6 +30,7 @@ export function getGlowSprite(
   ctx.fillStyle = glow
   ctx.fillRect(0, 0, size, size)
 
+  if (glowSpriteCache.size > GLOW_SPRITE_CACHE_MAX) glowSpriteCache.clear()
   glowSpriteCache.set(key, sprite)
   return sprite
 }
@@ -49,6 +56,7 @@ export function getAgentGlowSprite(
   ctx.fillStyle = glow
   ctx.fillRect(0, 0, size, size)
 
+  if (glowSpriteCache.size > GLOW_SPRITE_CACHE_MAX) glowSpriteCache.clear()
   glowSpriteCache.set(key, sprite)
   return sprite
 }

@@ -429,8 +429,5 @@ export const HIT_DETECTION = {
   toolCharWidth: 4.5,
   /** Estimated character width for bubble text */
   bubbleCharWidth: 4.2,
-  /** Tool card expanded height (with result) */
-  toolExpandedH: 34,
-  toolCollapsedH: 24,
 } as const
 
