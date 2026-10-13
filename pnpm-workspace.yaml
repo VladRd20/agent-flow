@@ -1,6 +1,7 @@
 packages:
   - extension
   - web
+  - app
 allowBuilds:
   esbuild: true
   sharp: true

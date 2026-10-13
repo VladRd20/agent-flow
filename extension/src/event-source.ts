@@ -12,6 +12,11 @@ import { readNewFileLines } from './fs-utils'
 export class JsonlEventSource implements vscode.Disposable {
   private watcher: fs.FSWatcher | null = null
   private fileSize = 0
+  // Trailing partial line from the last read (bytes past the last newline,
+  // not yet flushed by the writer) — must be threaded back into
+  // readNewFileLines on the next call or that line's event is lost for
+  // good, not just delayed. See fs-utils.ts's readNewFileLines doc comment.
+  private fileTail = ''
   private readonly _onEvent = new vscode.EventEmitter<AgentEvent>()
   private readonly _onStatus = new vscode.EventEmitter<'connected' | 'disconnected'>()
 
@@ -54,9 +59,10 @@ export class JsonlEventSource implements vscode.Disposable {
   }
 
   private readNewLines(): void {
-    const result = readNewFileLines(this.filePath, this.fileSize)
+    const result = readNewFileLines(this.filePath, this.fileSize, this.fileTail)
     if (!result) return
     this.fileSize = result.newSize
+    this.fileTail = result.tail
     for (const line of result.lines) {
       const event = this.parseLine(line)
       if (event) {

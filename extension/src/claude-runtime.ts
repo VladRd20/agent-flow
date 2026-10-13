@@ -17,10 +17,7 @@ import * as vscode from 'vscode'
 import { HookServer } from './hook-server'
 import { SessionWatcher } from './session-watcher'
 import { VisualizerPanel } from './webview-provider'
-import { AgentEvent } from './protocol'
-import {
-  ORCHESTRATOR_NAME, HOOK_SERVER_NOT_STARTED,
-} from './constants'
+import { HOOK_SERVER_NOT_STARTED } from './constants'
 import { migrateHttpHooks } from './hooks-config'
 import {
   writeDiscoveryFile, removeDiscoveryFile, ensureHookScript,
@@ -28,26 +25,9 @@ import {
 import { createLogger } from './logger'
 import { wireWatcherToPanel } from './session-runtime'
 import type { AgentRuntime } from './session-runtime'
+import { filterOrchestratorCompletion, filterHookEventForWatchedSession } from './subagent-event-filter'
 
 const log = createLogger('ClaudeRuntime')
-
-/** Events the session watcher already owns end-to-end via the transcript parser.
- *  Letting hooks re-emit these would create duplicate nodes with divergent names
- *  (hook = agent_type-id, transcript = description). */
-const SUBAGENT_LIFECYCLE_EVENTS = new Set<AgentEvent['type']>([
-  'agent_spawn', 'subagent_dispatch', 'subagent_return', 'agent_complete',
-])
-
-/** Convert orchestrator agent_complete to agent_idle unless it's a session end.
- *  Prevents premature "completed" state during long API calls. */
-function filterOrchestratorCompletion(event: AgentEvent): AgentEvent | null {
-  if (event.type !== 'agent_complete') return event
-  const agentName = event.payload?.agent ?? event.payload?.name
-  const isOrchestrator = agentName === ORCHESTRATOR_NAME || !agentName
-  if (!isOrchestrator) return event
-  if (event.payload?.sessionEnd) return event
-  return { ...event, type: 'agent_idle' }
-}
 
 export async function startClaudeRuntime(
   context: vscode.ExtensionContext,
@@ -96,21 +76,8 @@ export async function startClaudeRuntime(
         : watcher.isActive()
 
       if (watcherHandlesThis) {
-        const agentName = event.payload?.agent ?? event.payload?.name
-        const isOrchestrator = agentName === ORCHESTRATOR_NAME || !agentName
-
-        if (isOrchestrator) {
-          const filtered = filterOrchestratorCompletion(event)
-          if (filtered) panel.sendEvent(filtered)
-          return
-        }
-
-        // Subagent lifecycle events — let the watcher handle these (it has
-        // the correct display name from transcript/meta files)
-        if (SUBAGENT_LIFECYCLE_EVENTS.has(event.type)) return
-
-        // Subagent tool/message events — pass through
-        panel.sendEvent(event)
+        const filtered = filterHookEventForWatchedSession(event)
+        if (filtered) panel.sendEvent(filtered)
         return
       }
 

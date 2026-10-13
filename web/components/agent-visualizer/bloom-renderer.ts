@@ -48,8 +48,17 @@ export class BloomRenderer {
     this.boxBlur(this.bloomCtx, this.tempCtx, w, h, 6)
     this.boxBlur(this.bloomCtx, this.tempCtx, w, h, 4)
 
-    // Composite bloom over the target with additive blending
+    // Composite bloom over the target with additive blending.
+    // targetCtx still has canvas.tsx's devicePixelRatio scale() active at
+    // this point (it's only reset when the canvas itself is resized, not
+    // saved/restored around this call) — drawing sourceCanvas's PHYSICAL
+    // pixel dimensions through an already-dpr-scaled context stretched the
+    // blurred bloom buffer to dpr² the intended area, washing out the
+    // whole canvas on any non-1 devicePixelRatio display. Reset to the
+    // identity transform first so the draw call's own dimensions are the
+    // only scaling in effect.
     targetCtx.save()
+    targetCtx.setTransform(1, 0, 0, 1, 0, 0)
     targetCtx.globalCompositeOperation = 'lighter'
     targetCtx.globalAlpha = this.intensity
     targetCtx.drawImage(this.bloomCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height)

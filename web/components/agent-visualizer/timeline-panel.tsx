@@ -181,7 +181,7 @@ export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }
     canvas.style.height = `${canvasHeight}px`
 
     drawTimeline(ctx, sortedEntries, currentTime, width, canvasHeight, dpr)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- redraw on every prop change (component only re-renders on data/time updates)
+    // redraw on every prop change (component only re-renders on data/time updates)
   }, [visible, sortedEntries, currentTime, canvasHeight])
 
   if (!visible) return null

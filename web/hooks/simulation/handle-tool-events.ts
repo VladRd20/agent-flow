@@ -40,11 +40,18 @@ export function handleToolCallStart(
     let isDuplicate = false
     for (const tc of state.toolCalls.values()) {
       if (tc.agentId !== agentName || tc.toolName !== toolName || tc.state !== 'running') continue
-      if ((currentTime - tc.startTime) >= TOOL_DEDUP_WINDOW_S) continue
+      // An exact tool_use_id match IS the same call, full stop — no window.
+      // A slow call (big read, long-running Bash) easily takes longer than
+      // TOOL_DEDUP_WINDOW_S between its Hook Server report and its Session
+      // Watcher report, and gating the exact-id check behind the window
+      // (as this used to) let a late-arriving duplicate slip through as a
+      // second "ghost" node for the same real call.
       if (toolUseId && tc.toolUseId) {
         if (tc.toolUseId === toolUseId) { isDuplicate = true; break }
         continue
       }
+      // No id on one or both sides — fall back to the time-boxed heuristic.
+      if ((currentTime - tc.startTime) >= TOOL_DEDUP_WINDOW_S) continue
       const tcFilePath = extractFilePath(tc.inputData, tc.args)
       if (tcFilePath === newFilePath && tc.args === args) {
         isDuplicate = true

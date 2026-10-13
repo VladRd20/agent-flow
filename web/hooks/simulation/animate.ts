@@ -21,11 +21,31 @@ function animateAgents(agents: SimulationState['agents'], deltaTime: number, cur
     let timeAlive = agent.timeAlive
     let messageBubbles = agent.messageBubbles
 
-    if (agent.state !== 'complete' && opacity < 1) { opacity = Math.min(1, opacity + deltaTime * ANIM_SPEED.agentFadeIn); updated = true }
-    if (agent.state !== 'complete' && scale < 1) { scale = Math.min(1, scale + deltaTime * ANIM_SPEED.agentScaleIn); updated = true }
-    if (agent.state === 'complete' && !agent.isMain) {
-      if (opacity > 0) { opacity = Math.max(0, opacity - deltaTime * ANIM_SPEED.agentFadeOut); updated = true }
-      if (scale > 0.8) { scale = Math.max(0.8, scale - deltaTime * ANIM_SPEED.agentScaleOut); updated = true }
+    // Target opacity/scale by state, approached from whatever the agent's
+    // current value is — NOT gated on "not complete" for the fade-IN side.
+    // A session-switch replay (use-agent-simulation.ts's `capturedEvents`
+    // loop) can process an agent's entire history — spawn through
+    // completion — in one batch, inside a single animate() call, before this
+    // function ever runs. handleAgentSpawn starts every agent at opacity 0
+    // (for the live spawn fade-in effect); the old `state !== 'complete'`
+    // guard meant an agent that reached 'complete' within that same batch
+    // never got a chance to fade in at all — main agents (exempt from
+    // fade-out below) were then stuck invisible at opacity 0 forever, which
+    // is exactly what reproduced as "main node not visible" when switching
+    // to an already-completed session's tab.
+    const targetOpacity = agent.state === 'complete' ? (agent.isMain ? 1 : 0) : 1
+    const targetScale = agent.state === 'complete' ? (agent.isMain ? 1 : 0.8) : 1
+    if (opacity !== targetOpacity) {
+      opacity = opacity < targetOpacity
+        ? Math.min(targetOpacity, opacity + deltaTime * ANIM_SPEED.agentFadeIn)
+        : Math.max(targetOpacity, opacity - deltaTime * ANIM_SPEED.agentFadeOut)
+      updated = true
+    }
+    if (scale !== targetScale) {
+      scale = scale < targetScale
+        ? Math.min(targetScale, scale + deltaTime * ANIM_SPEED.agentScaleIn)
+        : Math.max(targetScale, scale - deltaTime * ANIM_SPEED.agentScaleOut)
+      updated = true
     }
     if (agent.state !== 'complete') { timeAlive += deltaTime; updated = true }
     // Prune expired message bubbles

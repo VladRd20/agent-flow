@@ -15,7 +15,6 @@ function getStressLevel(): StressLevel | null {
 
 const stressLevel = getStressLevel()
 if (stressLevel) {
-  // eslint-disable-next-line no-console
   console.log(`[stress-test] Loading ${stressLevel} stress scenario...`)
 }
 
