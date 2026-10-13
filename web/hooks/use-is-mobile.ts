@@ -29,9 +29,9 @@ export function useIsMobile(breakpoint: number = MOBILE_BREAKPOINT_PX): boolean 
       mql.addEventListener('change', update)
       return () => mql.removeEventListener('change', update)
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- legacy API fallback
+    // legacy API fallback
     ;(mql as any).addListener(update)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- legacy API fallback
+    // legacy API fallback
     return () => (mql as any).removeListener(update)
   }, [breakpoint])
 

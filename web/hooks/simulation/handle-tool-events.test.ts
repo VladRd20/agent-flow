@@ -99,6 +99,20 @@ test('two truly-concurrent same-tool-name calls by the same agent are disambigua
   assert.ok(Array.from(state.toolCalls.values()).every(tc => tc.state === 'complete'), 'both calls should be independently completed')
 })
 
+test('an exact tool_use_id match dedupes even outside the 3s window (bug: the old code checked elapsed time BEFORE the exact-id check, so a slow call reported twice more than 3s apart — e.g. by both the Hook Server and the Session Watcher for a long Bash command — produced a ghost duplicate node instead of deduping)', () => {
+  const state = makeState('agent-1')
+  const ctx = makeContext()
+
+  handleToolCallStart({ agent: 'agent-1', tool: 'Bash', args: 'sleep 10', tool_use_id: 'toolu_SLOW' }, 10, state, ctx)
+  // Second report of the SAME call, 5s later (past TOOL_DEDUP_WINDOW_S=3),
+  // carrying the identical tool_use_id — this is a duplicate report, not a
+  // new call, and must dedupe regardless of elapsed time.
+  handleToolCallStart({ agent: 'agent-1', tool: 'Bash', args: 'sleep 10', tool_use_id: 'toolu_SLOW' }, 15, state, ctx)
+
+  const running = Array.from(state.toolCalls.values()).filter(tc => tc.state === 'running')
+  assert.equal(running.length, 1, 'a late duplicate report with a matching tool_use_id must still dedupe, not create a ghost node')
+})
+
 test('tool_call_end attributes token cost to the call that actually just completed, not an older already-complete same-name call (bug: previously picked the first same agent+tool match in Map order, regardless of running state)', () => {
   const state = makeState('agent-1')
   const ctx = makeContext()

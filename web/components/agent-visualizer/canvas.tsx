@@ -336,7 +336,7 @@ export function AgentCanvas({
     const loop = (timestamp: number) => drawRef.current(timestamp)
     animationRef.current = requestAnimationFrame(loop)
     return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- drawRef is stable; rAF loop set up once
+    // drawRef is stable; rAF loop set up once
   }, [])
 
   return (

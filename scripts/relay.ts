@@ -15,6 +15,7 @@ import { readNewFileLines, foldPathCase } from '../extension/src/fs-utils'
 import { scanSubagentsDir, readSubagentNewLines } from '../extension/src/subagent-watcher'
 import { handlePermissionDetection } from '../extension/src/permission-detection'
 import { CodexSessionWatcher } from '../extension/src/codex-session-watcher'
+import { filterHookEventForWatchedSession } from '../extension/src/subagent-event-filter'
 import {
   INACTIVITY_TIMEOUT_MS, SCAN_INTERVAL_MS, ACTIVE_SESSION_AGE_S, POLL_FALLBACK_MS,
   SESSION_ID_DISPLAY, SYSTEM_PROMPT_BASE_TOKENS, ORCHESTRATOR_NAME,
@@ -139,6 +140,19 @@ function emitContextUpdate(agentName: string, session: WatchedSession, sessionId
 
 function emitEvent(event: AgentEvent, sessionId?: string) {
   broadcastEvent(sessionId ? { ...event, sessionId } : event)
+}
+
+function filterHookEvent(event: AgentEvent): AgentEvent | null {
+  // Matches extension/src/claude-runtime.ts's watcherHandlesThis fallback
+  // exactly: a sessionless event is treated as handled-by-watcher whenever
+  // ANY session is currently active (SessionWatcher.isActive() there,
+  // sessions.size > 0 here), not as always-unhandled. These two consumers
+  // of HookServer had already drifted on exactly this point once before —
+  // see the comment above hookServer.onEvent() — which is why the actual
+  // filtering policy now lives in one shared module instead of two copies.
+  const watcherHandlesThis = event.sessionId ? sessions.has(event.sessionId) : sessions.size > 0
+  if (!watcherHandlesThis) return event
+  return filterHookEventForWatchedSession(event)
 }
 
 const parser = new TranscriptParser({
@@ -431,7 +445,20 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
       // Route through broadcastEvent (not raw broadcast) so hook-sourced
       // events (tool_call_start/end, subagent_return, agent_complete, etc.)
       // are buffered like every other event source and survive SSE reconnects.
-      broadcastEvent(event)
+      //
+      // Subagent lifecycle events need filtering first, mirroring
+      // extension/src/claude-runtime.ts: when this session's transcript is
+      // already being parsed (watchSession() below), the TranscriptParser is
+      // the authority on subagent spawn/completion — it names subagents from
+      // the Task's description, while the hook server names them generically
+      // as `${agentType}-${agentId.slice(-N)}` (see hook-server.ts
+      // handleSubagentStart/handleSubagentStop). Letting the hook's
+      // agent_complete through unfiltered sends a completion signal for a
+      // node name that was never spawned under that name, so it silently
+      // no-ops and the real node is left looking stuck/active until the
+      // (possibly lagging) transcript-driven completion catches up.
+      const filtered = filterHookEvent(event)
+      if (filtered) broadcastEvent(filtered)
     })
 
     writeDiscoveryFile(hookPort, workspace)
