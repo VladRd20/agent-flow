@@ -6,6 +6,7 @@
  */
 
 import type { AgentState, ContextBreakdown } from './agent-types'
+import { MODEL_FAMILY_NAME } from './canvas-constants'
 
 // Holographic Color Palette
 export const COLORS = {
@@ -215,6 +216,20 @@ export const COLORS = {
   panelLabelDim: '#66ccff65',
   scrollBtnText: '#66ccff',
   scrollbarThumb: 'rgba(100,200,255,0.15)',
+
+  // ─── Node group colors (Obsidian-style category/model-family coloring) ─────
+  // Primary node identity color, layered under the (secondary) state signal —
+  // see getAgentGroupColor(). Category colors are the fallback used before a
+  // model is known (e.g. the brief window between agent_spawn and
+  // model_detected); once a model is known its family color takes over.
+  categoryOrchestrator: '#aaeeff',
+  categorySubagent: '#7799cc',
+  familyFable: '#ff9f6b',
+  familyMythos: '#ff6ba3',
+  familyOpus: '#cc88ff',
+  familySonnet: '#66ccff',
+  familyHaiku: '#5be8b0',
+  familyGpt: '#8fe066',
 } as const
 
 // ─── Role Colors (message feed & bubbles) ───────────────────────────────────
@@ -251,6 +266,37 @@ export function getDiscoveryTypeColor(type: string): string {
 /** Safely combine a partial rgba base (e.g. 'rgba(10, 15, 30,') with an alpha value */
 export function withAlpha(rgbaBase: string, alpha: number): string {
   return `${rgbaBase} ${alpha})`
+}
+
+/** Model family name (e.g. 'sonnet', 'gpt') for an agent's model ID, or null
+ *  when unknown/unset. Reuses the single pattern table in canvas-constants.ts
+ *  so this can never drift from the context-window/cost family detection. */
+export function getModelFamily(model?: string): string | null {
+  if (!model) return null
+  const lower = model.toLowerCase()
+  const match = MODEL_FAMILY_NAME.find(f => f.pattern.test(lower))
+  return match ? match.name : null
+}
+
+const FAMILY_COLOR: Record<string, string> = {
+  fable: COLORS.familyFable,
+  mythos: COLORS.familyMythos,
+  opus: COLORS.familyOpus,
+  sonnet: COLORS.familySonnet,
+  haiku: COLORS.familyHaiku,
+  gpt: COLORS.familyGpt,
+}
+
+/** Obsidian-style node "group" color: primary identity color for a node,
+ *  independent of its live run-state. Model family wins when known (richer
+ *  grouping — e.g. distinguishing an Opus orchestrator from a Haiku one);
+ *  falls back to the broad orchestrator/subagent category otherwise. State
+ *  (running/error/etc.) is a separate, secondary visual signal layered on
+ *  top by the caller — see draw-agents.ts. */
+export function getAgentGroupColor(agent: { isMain: boolean; model?: string }): string {
+  const family = getModelFamily(agent.model)
+  if (family && FAMILY_COLOR[family]) return FAMILY_COLOR[family]
+  return agent.isMain ? COLORS.categoryOrchestrator : COLORS.categorySubagent
 }
 
 /** Build the context-breakdown color segments for a given breakdown. */

@@ -28,6 +28,14 @@ export const DEFAULT_CONTEXT_SIZE = 200_000
 /** Used when no model ID is available at all. */
 export const FALLBACK_CONTEXT_SIZE = 1_000_000
 
+/** Family name lookup (for node group coloring — see getAgentGroupColor in
+ *  colors.ts). Reuses the same pattern table as MODEL_FAMILY_CONTEXT/
+ *  MODEL_FAMILY_COST so family detection can never drift between the three. */
+export const MODEL_FAMILY_NAME: ReadonlyArray<{ pattern: RegExp; name: string }> = [
+  ...CLAUDE_FAMILIES.map(f => ({ pattern: new RegExp(`${f.name}-\\d`), name: f.name })),
+  { pattern: /gpt-\d/, name: 'gpt' },
+]
+
 // ─── Visibility threshold ───────────────────────────────────────────────────
 
 /** Minimum opacity for an element to be considered visible (used for edge/draw culling) */
@@ -153,8 +161,36 @@ export const FORCE = {
 // ─── Click-to-focus (local graph highlight) config ──────────────────────────
 
 /** Opacity multiplier applied to agents/edges/tool calls outside the
- *  focused node's direct neighborhood when a node is selected. */
+ *  focused node's direct neighborhood when a node is selected (click —
+ *  "local graph" view, firm dimming). */
 export const FOCUS_DIM_ALPHA = 0.15
+
+/** Opacity multiplier used instead of FOCUS_DIM_ALPHA when the focus comes
+ *  from hovering rather than a click/selection — a lighter preview of the
+ *  same local-graph treatment so it doesn't fight the firmer click state. */
+export const HOVER_DIM_ALPHA = 0.45
+
+/** Below this camera zoom, sub-agent labels are hidden unless the node is
+ *  hovered/selected/in the active focus set — keeps dense graphs readable
+ *  (Obsidian hides labels at low zoom for the same reason). The main/
+ *  orchestrator node's label always stays visible. */
+export const LABEL_ZOOM_THRESHOLD = 0.55
+
+// ─── Node sizing config (Obsidian-style: busier nodes read as bigger) ──────
+
+export const NODE_SIZE = {
+  /** Size growth per connected edge (parent-child + tool-call). */
+  growthPerEdge: 0.035,
+  /** Cap on the total size multiplier so a very busy orchestrator doesn't
+   *  dwarf everything else. */
+  maxMultiplier: 1.6,
+} as const
+
+// ─── Bloom tuning (soft Obsidian-style glow, not a heavy bloom) ────────────
+
+/** Post-process bloom intensity passed to BloomRenderer — the blur-radius/
+ *  compositing pipeline itself lives in bloom-renderer.ts and is untouched. */
+export const BLOOM_INTENSITY = 0.32
 
 // ─── Tool slot placement config ─────────────────────────────────────────────
 
