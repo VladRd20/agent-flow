@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { Particle, Edge, DepthParticle } from '@/lib/agent-types'
 import type { SimulationState } from '@/hooks/simulation/types'
 import { getStateColor } from '@/lib/colors'
-import { ANIM_SPEED, PERF_OVERLAY, PERF_OVERLAY_ENABLED } from '@/lib/canvas-constants'
+import { ANIM_SPEED, PERF_OVERLAY, PERF_OVERLAY_ENABLED, FOCUS_DIM_ALPHA, HOVER_DIM_ALPHA, BLOOM_INTENSITY } from '@/lib/canvas-constants'
 import { BloomRenderer } from './bloom-renderer'
 import { createDepthParticles, updateDepthParticles, drawBackground } from './background-layer'
 import {
@@ -20,6 +20,7 @@ import {
   drawCostLabels, drawCostSummaryPanel,
   detectStateChanges as detectStateChangesPure,
   computeFocusSet,
+  computeDegreeMap,
 } from './canvas/index'
 import { useCanvasCamera } from '@/hooks/use-canvas-camera'
 import { useCanvasInteraction } from '@/hooks/use-canvas-interaction'
@@ -86,13 +87,20 @@ export function AgentCanvas({
     edgeMap: Map<string, Edge>
   }>({ particles: [], edges: [], activeEdgeIds: new Set(), edgeMap: new Map() })
 
-  // Click-to-focus set cache — invalidates on selection change or edges
-  // collection replacement (new array identity from animateEdges/processEvent)
+  // Click-to-focus set cache — invalidates on the active focus id (selection
+  // takes priority over hover) or edges collection replacement (new array
+  // identity from animateEdges/processEvent).
   const focusSetCacheRef = useRef<{
-    selectedAgentId: string | null
+    focusId: string | null
     edges: Edge[]
     focusSet: Set<string> | null
-  }>({ selectedAgentId: null, edges: [], focusSet: null })
+  }>({ focusId: null, edges: [], focusSet: null })
+
+  // Degree-map cache (connected-edge count per agent, for Obsidian-style node
+  // sizing) — invalidates only when the edges collection reference changes.
+  const degreeMapCacheRef = useRef<{ edges: Edge[]; degreeMap: Map<string, number> }>({
+    edges: [], degreeMap: new Map(),
+  })
 
   // ─── Stable refs for animation loop & event handlers ────────────────────
   // Simulation data (agents, particles, etc.) is synced from simulationRef
@@ -134,7 +142,7 @@ export function AgentCanvas({
   // ─── Setup ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    bloomRef.current = new BloomRenderer(0.5)
+    bloomRef.current = new BloomRenderer(BLOOM_INTENSITY)
     depthParticlesRef.current = createDepthParticles(dimensions.width, dimensions.height)
     return () => { bloomRef.current = null }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- particles created once, resized by draw loop
@@ -274,22 +282,36 @@ export function AgentCanvas({
         edgeLookupCacheRef.current = { particles, edges, activeEdgeIds, edgeMap }
       }
 
-      // Click-to-focus set — recomputed only when selection or the edges
-      // collection reference changes (cheap O(edges), but no need every frame)
+      // Click-to-focus set — recomputed only when the active focus id or the
+      // edges collection reference changes (cheap O(edges), but no need
+      // every frame). Selection wins over hover; hovering gets the same
+      // local-graph set but a lighter dim (HOVER_DIM_ALPHA) so it reads as a
+      // preview rather than the firmer click state.
+      const focusId = selectedAgentId ?? hoveredAgentId
       const fsCache = focusSetCacheRef.current
       let focusSet: Set<string> | null
-      if (fsCache.selectedAgentId === selectedAgentId && fsCache.edges === edges) {
+      if (fsCache.focusId === focusId && fsCache.edges === edges) {
         focusSet = fsCache.focusSet
       } else {
-        focusSet = computeFocusSet(selectedAgentId, edges)
-        focusSetCacheRef.current = { selectedAgentId, edges, focusSet }
+        focusSet = computeFocusSet(focusId, edges)
+        focusSetCacheRef.current = { focusId, edges, focusSet }
       }
+      const dimAlpha = selectedAgentId ? FOCUS_DIM_ALPHA : HOVER_DIM_ALPHA
+
+      // Degree map (connected-edge count per agent) for node sizing —
+      // recomputed only when the edges collection reference changes.
+      const dmCache = degreeMapCacheRef.current
+      const degreeMap = dmCache.edges === edges ? dmCache.degreeMap : (() => {
+        const computed = computeDegreeMap(edges)
+        degreeMapCacheRef.current = { edges, degreeMap: computed }
+        return computed
+      })()
 
       drawDiscoveryConnections(ctx, discoveries, agents)
-      drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current, focusSet, selectedAgentId)
-      drawToolCalls(ctx, toolCalls, timeRef.current, selectedToolCallId, focusSet)
+      drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current, focusSet, selectedAgentId ?? hoveredAgentId, dimAlpha)
+      drawToolCalls(ctx, toolCalls, timeRef.current, selectedToolCallId, focusSet, dimAlpha)
       drawDiscoveries(ctx, discoveries, agents, selectedDiscoveryId)
-      drawAgents(ctx, agents, selectedAgentId, hoveredAgentId, showStats, timeRef.current, focusSet)
+      drawAgents(ctx, agents, selectedAgentId, hoveredAgentId, showStats, timeRef.current, focusSet, degreeMap, transform.scale, dimAlpha)
       drawMessageBubblesWorld(ctx, agents, simTimeRef.current)
       if (showCostOverlay) drawCostLabels(ctx, agents, toolCalls)
       drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)

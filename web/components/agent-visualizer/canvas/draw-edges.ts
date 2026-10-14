@@ -105,10 +105,14 @@ export function drawEdges(
   toolCalls: Map<string, ToolCallNode>,
   activeEdgeIds: Set<string>,
   time: number,
-  /** Click-to-focus set (selected node + direct neighbors). Null = no active
-   *  focus. An edge dims unless it directly touches the selected node. */
+  /** Click-to-focus set (selected node + direct neighbors), or a lighter
+   *  hover-preview of the same set. Null = no active focus. An edge dims
+   *  unless it directly touches the focused node. */
   focusSet: Set<string> | null = null,
   selectedAgentId: string | null = null,
+  /** Opacity multiplier for edges outside the focus set — FOCUS_DIM_ALPHA
+   *  for a firm click-selection, HOVER_DIM_ALPHA for a lighter hover preview. */
+  dimAlpha: number = FOCUS_DIM_ALPHA,
 ) {
   for (const edge of edges) {
     const fromAgent = agents.get(edge.from)
@@ -135,7 +139,7 @@ export function drawEdges(
     // (which also contains the selected node's neighbors, who may be linked
     // to each other without that link touching the selected node itself).
     const dimMultiplier = focusSet && !(edge.from === selectedAgentId || edge.to === selectedAgentId)
-      ? FOCUS_DIM_ALPHA : 1
+      ? dimAlpha : 1
 
     ctx.save()
 

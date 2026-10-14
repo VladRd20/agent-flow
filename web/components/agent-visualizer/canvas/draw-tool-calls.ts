@@ -9,15 +9,19 @@ export function drawToolCalls(
   toolCalls: Map<string, ToolCallNode>,
   time: number,
   selectedToolCallId?: string | null,
-  /** Click-to-focus set (selected agent node + direct neighbors). Null = no
-   *  active focus. A tool call dims unless it's in the focused neighborhood. */
+  /** Click-to-focus set (selected agent node + direct neighbors), or a
+   *  lighter hover-preview of the same set. Null = no active focus. A tool
+   *  call dims unless it's in the focused neighborhood. */
   focusSet: Set<string> | null = null,
+  /** Opacity multiplier for tool calls outside the focus set —
+   *  FOCUS_DIM_ALPHA for a click-selection, HOVER_DIM_ALPHA for hover. */
+  dimAlpha: number = FOCUS_DIM_ALPHA,
 ) {
   for (const [id, tool] of toolCalls) {
     const isRunning = tool.state === 'running'
     const isError = tool.state === 'error'
     const pulse = isRunning ? Math.sin(time * 4) * 0.2 + 0.8 : isError ? Math.sin(time * 6) * 0.15 + 0.85 : 0.5
-    const dimMultiplier = focusSet && !focusSet.has(id) ? FOCUS_DIM_ALPHA : 1
+    const dimMultiplier = focusSet && !focusSet.has(id) ? dimAlpha : 1
 
     ctx.save()
     ctx.globalAlpha = tool.opacity * dimMultiplier

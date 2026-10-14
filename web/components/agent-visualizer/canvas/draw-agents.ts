@@ -1,11 +1,12 @@
 import { Agent, NODE, ANIM } from '@/lib/agent-types'
-import { COLORS, getStateColor, contextSegments } from '@/lib/colors'
+import { COLORS, getStateColor, getAgentGroupColor, contextSegments } from '@/lib/colors'
 import {
-  AGENT_DRAW, CONTEXT_BAR, CONTEXT_RING, STATS_OVERLAY, FOCUS_DIM_ALPHA,
+  AGENT_DRAW, CONTEXT_BAR, CONTEXT_RING, STATS_OVERLAY, FOCUS_DIM_ALPHA, LABEL_ZOOM_THRESHOLD,
 } from '@/lib/canvas-constants'
 import { alphaHex, formatTokens } from '@/lib/utils'
 import { truncateText, drawHexagon, CLAUDE_SPARK_D, OPENAI_LOGO_D, OPENAI_LOGO_VIEWBOX } from './draw-misc'
 import { getAgentGlowSprite } from './render-cache'
+import { getNodeSizeMultiplier } from './node-size'
 
 let _claudeSparkPath: Path2D | null = null
 export function getClaudeSparkPath() {
@@ -220,13 +221,18 @@ function drawScanline(ctx: CanvasRenderingContext2D, agent: Agent, r: number, co
   ctx.restore()
 }
 
-function drawStateRing(ctx: CanvasRenderingContext2D, agent: Agent, r: number, color: string, isHovered: boolean, isSelected: boolean, isWaiting: boolean, time: number) {
+function drawStateRing(ctx: CanvasRenderingContext2D, agent: Agent, r: number, groupColor: string, isHovered: boolean, isSelected: boolean, isWaiting: boolean, time: number) {
+  // The ring is the node's group/category identity by default, but an error
+  // overrides it outright — a failing node must read as "wrong" at a glance,
+  // not just as its usual orchestrator/subagent/model color.
+  const ringColor = agent.state === 'error' ? COLORS.error : groupColor
+
   drawHexagon(ctx, agent.x, agent.y, r)
-  ctx.strokeStyle = color
+  ctx.strokeStyle = ringColor
   ctx.lineWidth = (isSelected || isHovered) ? 2.5 : 2
   if (agent.state === 'complete') {
     ctx.setLineDash([4, 4])
-    ctx.strokeStyle = color + '60'
+    ctx.strokeStyle = ringColor + '60'
   } else if (isWaiting) {
     ctx.setLineDash([6, 4])
     ctx.lineDashOffset = -time * AGENT_DRAW.waitingDashSpeed
@@ -237,13 +243,34 @@ function drawStateRing(ctx: CanvasRenderingContext2D, agent: Agent, r: number, c
   ctx.lineDashOffset = 0
 }
 
-function drawCenterIcon(ctx: CanvasRenderingContext2D, agent: Agent, r: number, color: string, isWaiting: boolean) {
+/** Extra pulsing outer ring for error state — layered on top of the normal
+ *  (now group-colored) ring so a failing node still reads unmistakably as
+ *  "error" at a glance, even though the base ring no longer hard-codes the
+ *  state color. */
+function drawErrorAlertRing(ctx: CanvasRenderingContext2D, agent: Agent, r: number, time: number) {
+  const pulse = 0.5 + Math.sin(time * 6) * 0.3
+  ctx.save()
+  drawHexagon(ctx, agent.x, agent.y, r + AGENT_DRAW.outerRingOffset + 2)
+  ctx.strokeStyle = COLORS.error
+  ctx.lineWidth = 2
+  ctx.globalAlpha = pulse
+  ctx.shadowColor = COLORS.error
+  ctx.shadowBlur = 8
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawCenterIcon(
+  ctx: CanvasRenderingContext2D, agent: Agent, r: number,
+  groupColor: string, stateColor: string, isWaiting: boolean,
+) {
   if (isWaiting) {
-    // Geometric lock icon — fits the holographic style
+    // Geometric lock icon — tinted with the state color (amber) since this
+    // is a dedicated state signal, not the node's group/category identity.
     const s = r * 0.3
     ctx.save()
-    ctx.strokeStyle = color + '90'
-    ctx.fillStyle = color + '90'
+    ctx.strokeStyle = stateColor + '90'
+    ctx.fillStyle = stateColor + '90'
     ctx.lineWidth = 1.5
     // Lock body (rounded rect)
     ctx.beginPath()
@@ -255,9 +282,11 @@ function drawCenterIcon(ctx: CanvasRenderingContext2D, agent: Agent, r: number, 
     ctx.stroke()
     ctx.restore()
   } else if (agent.isMain) {
-    drawAgentBrand(ctx, agent.x, agent.y, r, color + '90', agent.runtime)
+    drawAgentBrand(ctx, agent.x, agent.y, r, groupColor + '90', agent.runtime)
   } else {
-    ctx.fillStyle = color + '90'
+    // Icon shape (gear vs. diamond) already signals tool_calling vs. other
+    // states, so the fill can safely be the node's group/category color.
+    ctx.fillStyle = groupColor + '90'
     ctx.font = `${r * AGENT_DRAW.subIconScale}px monospace`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -339,15 +368,29 @@ export function drawAgents(
   hoveredAgentId: string | null,
   showStats: boolean,
   time: number,
-  /** Click-to-focus set (selected node + direct neighbors). Null = no active
-   *  focus, everything draws at full opacity. See computeFocusSet(). */
+  /** Click-to-focus set (selected node + direct neighbors, or a lighter
+   *  hover-preview of the same set). Null = no active focus, everything
+   *  draws at full opacity. See computeFocusSet(). */
   focusSet: Set<string> | null = null,
+  /** Per-agent connected-edge counts (parent-child + tool), used to size
+   *  busier nodes larger (Obsidian-style). Null = everyone draws at their
+   *  base category radius. See computeDegreeMap() in node-size.ts. */
+  degreeMap: Map<string, number> | null = null,
+  /** Current camera zoom (transform.scale). Used to hide sub-agent labels
+   *  at low zoom so dense graphs stay readable. Defaults to 1 (always
+   *  visible) for callers/tests that don't track zoom. */
+  zoomScale: number = 1,
+  /** Opacity multiplier for agents outside the focus set — FOCUS_DIM_ALPHA
+   *  for a click-selection, HOVER_DIM_ALPHA for a lighter hover preview. */
+  dimAlpha: number = FOCUS_DIM_ALPHA,
 ) {
   for (const [id, agent] of agents) {
     const radius = agent.isMain ? NODE.radiusMain : NODE.radiusSub
-    const color = getStateColor(agent.state)
+    const stateColor = getStateColor(agent.state)
+    const groupColor = getAgentGroupColor(agent)
     const isHovered = id === hoveredAgentId
     const isSelected = id === selectedAgentId
+    const isFocused = focusSet ? focusSet.has(id) : true
 
     const isWaiting = agent.state === 'waiting_permission'
 
@@ -357,32 +400,38 @@ export function drawAgents(
       ? Math.sin(time * ANIM.breathe.thinkingSpeed) * ANIM.breathe.thinkingAmp + 1
       : agent.state === 'idle' ? Math.sin(time * ANIM.breathe.idleSpeed) * ANIM.breathe.idleAmp + 1 : 1
 
-    const r = radius * breathe * agent.scale
+    const sizeMultiplier = degreeMap ? getNodeSizeMultiplier(id, degreeMap) : 1
+    const r = radius * breathe * agent.scale * sizeMultiplier
 
     // Focus dimming is a pure rendering multiplier on top of the agent's own
     // fade-in/out opacity (agent.opacity) — it never touches the animation
     // model's target-opacity state, so it can't regress the session-switch
     // replay fade-in fix in animate.ts.
-    const dimMultiplier = focusSet && !focusSet.has(id) ? FOCUS_DIM_ALPHA : 1
+    const dimMultiplier = focusSet && !isFocused ? dimAlpha : 1
 
     ctx.save()
     ctx.globalAlpha = agent.opacity * dimMultiplier
 
     drawDepthShadow(ctx, agent, r)
-    drawAgentGlow(ctx, agent, r, color, isHovered, isSelected, isWaiting)
-    drawScanline(ctx, agent, r, color, isHovered, isWaiting, time)
-    drawStateRing(ctx, agent, r, color, isHovered, isSelected, isWaiting, time)
-    drawCenterIcon(ctx, agent, r, color, isWaiting)
+    drawAgentGlow(ctx, agent, r, groupColor, isHovered, isSelected, isWaiting)
+    drawScanline(ctx, agent, r, groupColor, isHovered, isWaiting, time)
+    drawStateRing(ctx, agent, r, groupColor, isHovered, isSelected, isWaiting, time)
+    if (agent.state === 'error') drawErrorAlertRing(ctx, agent, r, time)
+    drawCenterIcon(ctx, agent, r, groupColor, stateColor, isWaiting)
 
     if (agent.state === 'thinking') {
-      drawOrbitingParticles(ctx, agent, r, color, time)
+      drawOrbitingParticles(ctx, agent, r, stateColor, time)
     }
 
     if (isWaiting) {
-      drawWaitingRipples(ctx, agent, r, color, time)
+      drawWaitingRipples(ctx, agent, r, stateColor, time)
     }
 
-    drawAgentLabel(ctx, agent, r, isHovered)
+    // Labels: always show for the orchestrator, a hovered/selected node, or
+    // anything in the active focus set; otherwise hide sub-agent labels at
+    // low zoom to avoid cluttering dense graphs (Obsidian-style density).
+    const showLabel = agent.isMain || isHovered || isSelected || (focusSet ? isFocused : zoomScale >= LABEL_ZOOM_THRESHOLD)
+    if (showLabel) drawAgentLabel(ctx, agent, r, isHovered)
 
     // Context composition — ring for main agent, bar for sub-agents
     if (agent.state !== 'complete' || agent.opacity > 0.5) {
