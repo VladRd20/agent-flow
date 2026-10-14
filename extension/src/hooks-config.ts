@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { ClaudeHookEntry } from './protocol'
-import { HOOK_URL_PREFIX, HOOK_TIMEOUT_S } from './constants'
+import { HOOK_SERVER_HOST, HOOK_TIMEOUT_S } from './constants'
 import {
   HOOK_COMMAND_MARKER,
   getHookCommand, ensureHookScript,
@@ -15,24 +15,44 @@ const log = createLogger('Hooks')
 
 const GLOBAL_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json')
 
-/** Read and parse Claude Code's global settings.json. Returns null on failure. */
-function readGlobalSettings(): Record<string, unknown> | null {
+// Legacy Agent Flow HTTP hooks were always the bare origin (e.g.
+// "http://127.0.0.1:51234") with no path — the whole origin was the
+// webhook target. Matching on HOOK_URL_PREFIX alone (a startsWith check)
+// also caught other tools' loopback hooks that merely shared the host,
+// e.g. "http://127.0.0.1:9229/some-other-endpoint", and deleted them on
+// install. Require an exact bare-origin match instead.
+const LEGACY_HOOK_URL_RE = new RegExp(`^http://${HOOK_SERVER_HOST}:\\d+/?$`)
+
+/** Read and parse Claude Code's global settings.json.
+ *  Returns null if the file doesn't exist, or 'parse-error' if it exists
+ *  but can't be parsed — callers must not treat the latter as "no settings
+ *  yet" (that would silently discard the user's existing file on write). */
+function readGlobalSettings(): Record<string, unknown> | null | 'parse-error' {
   try {
     if (!fs.existsSync(GLOBAL_SETTINGS_PATH)) { return null }
     return JSON.parse(fs.readFileSync(GLOBAL_SETTINGS_PATH, 'utf-8'))
   } catch (err) {
     log.debug('Failed to read Claude settings:', err)
-    return null
+    return 'parse-error'
   }
 }
 
-/** Check whether a single hook entry belongs to Agent Flow */
-function isAgentFlowHook(entry: ClaudeHookEntry): boolean {
+/** Atomically write JSON to settingsPath (temp file + rename), so a crash
+ *  or interrupted write can't truncate/corrupt the user's settings file. */
+function writeSettingsAtomic(settingsPath: string, settings: unknown): void {
+  const tmpPath = `${settingsPath}.${process.pid}.tmp`
+  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n')
+  fs.renameSync(tmpPath, settingsPath)
+}
+
+/** Check whether a single hook entry belongs to Agent Flow.
+ *  Exported for tests only — not part of the module's public surface. */
+export function isAgentFlowHook(entry: ClaudeHookEntry): boolean {
   return !!entry.hooks?.some(h =>
     // Normalize backslashes to forward slashes so Windows paths
     // (e.g. "C:\\Users\\...\\agent-flow\\hook.js") match HOOK_COMMAND_MARKER.
     h.command?.replace(/\\/g, '/').includes(HOOK_COMMAND_MARKER) ||
-    h.url?.startsWith(HOOK_URL_PREFIX),
+    (h.url !== undefined && LEGACY_HOOK_URL_RE.test(h.url)),
   )
 }
 
@@ -90,8 +110,18 @@ export async function configureClaudeHooks(): Promise<void> {
     SessionEnd: [hookEntry],
   }
 
-  // Read existing settings
-  let settings: Record<string, unknown> = readGlobalSettings() ?? {}
+  // Read existing settings. A file that exists but fails to parse is left
+  // untouched — proceeding with {} would silently replace it with a file
+  // that contains only our hooks, discarding everything else in it.
+  const existing = readGlobalSettings()
+  if (existing === 'parse-error') {
+    vscode.window.showErrorMessage(
+      `Agent Flow: ${GLOBAL_SETTINGS_PATH} exists but couldn't be parsed as JSON. ` +
+      'Fix or remove it, then retry hook setup — leaving it untouched for now.',
+    )
+    return
+  }
+  const settings: Record<string, unknown> = existing ?? {}
 
   // Merge hooks — preserve existing hooks, replace ours
   const existingHooks = (settings.hooks || {}) as Record<string, unknown[]>
@@ -104,12 +134,12 @@ export async function configureClaudeHooks(): Promise<void> {
 
   settings.hooks = existingHooks
 
-  // Write
+  // Write (temp file + rename, so an interrupted write can't truncate it)
   const dir = path.dirname(GLOBAL_SETTINGS_PATH)
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
   }
-  fs.writeFileSync(GLOBAL_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n')
+  writeSettingsAtomic(GLOBAL_SETTINGS_PATH, settings)
 
   vscode.window.showInformationMessage(
     'Claude Code hooks configured. New sessions will stream events to Agent Flow.',
@@ -144,7 +174,7 @@ export function migrateHttpHooks(): void {
           const e = entry as ClaudeHookEntry
           if (!e.hooks) { continue }
           for (const h of e.hooks) {
-            if (h.url?.startsWith(HOOK_URL_PREFIX)) {
+            if (h.url !== undefined && LEGACY_HOOK_URL_RE.test(h.url)) {
               // Replace HTTP hook with command hook
               delete h.url
               h.type = 'command'
@@ -157,7 +187,7 @@ export function migrateHttpHooks(): void {
       }
 
       if (changed) {
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n')
+        writeSettingsAtomic(settingsPath, settings)
         log.info(`Migrated HTTP hooks → command hooks in ${settingsPath}`)
         // Ensure migrated project-level hooks are tracked in the manifest
         if (workspaceFolder && settingsPath.includes(workspaceFolder)) {
@@ -176,7 +206,8 @@ export function migrateHttpHooks(): void {
 export function isDisable1MContext(): boolean {
   if (process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT === '1') { return true }
   const settings = readGlobalSettings()
-  return (settings?.env as Record<string, unknown>)?.CLAUDE_CODE_DISABLE_1M_CONTEXT === '1'
+  if (!settings || settings === 'parse-error') { return false }
+  return (settings.env as Record<string, unknown>)?.CLAUDE_CODE_DISABLE_1M_CONTEXT === '1'
 }
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────

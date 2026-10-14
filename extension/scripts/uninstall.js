@@ -14,7 +14,11 @@ const path = require('path');
 const os = require('os');
 
 const HOOK_COMMAND_MARKER = 'agent-flow/hook.js';
-const HOOK_URL_PREFIX = 'http://127.0.0.1:';
+// Legacy Agent Flow HTTP hooks were always the bare origin
+// ("http://127.0.0.1:<port>", no path). Match that exactly, not as a
+// startsWith prefix, so another tool's loopback hook sharing the host
+// (e.g. "http://127.0.0.1:9229/some-endpoint") isn't removed too.
+const LEGACY_HOOK_URL_RE = /^http:\/\/127\.0\.0\.1:\d+\/?$/;
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow');
 const MANIFEST_PATH = path.join(DISCOVERY_DIR, 'workspaces.json');
 
@@ -32,8 +36,8 @@ function removeHooksFromFile(settingsPath) {
       if (!Array.isArray(entries)) { continue; }
       const filtered = entries.filter(entry => {
         return !entry.hooks?.some(h =>
-          h.command?.includes(HOOK_COMMAND_MARKER) ||
-          h.url?.startsWith(HOOK_URL_PREFIX),
+          h.command?.replace(/\\/g, '/').includes(HOOK_COMMAND_MARKER) ||
+          (h.url !== undefined && LEGACY_HOOK_URL_RE.test(h.url)),
         );
       });
       if (filtered.length !== entries.length) {
@@ -53,7 +57,9 @@ function removeHooksFromFile(settingsPath) {
     if (Object.keys(settings).length === 0) {
       fs.unlinkSync(settingsPath);
     } else {
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+      const tmpPath = `${settingsPath}.${process.pid}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
+      fs.renameSync(tmpPath, settingsPath);
     }
   } catch { /* best effort */ }
 }
