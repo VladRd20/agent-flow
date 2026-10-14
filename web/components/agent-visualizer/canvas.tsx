@@ -19,6 +19,7 @@ import {
   drawDiscoveries, drawDiscoveryConnections,
   drawCostLabels, drawCostSummaryPanel,
   detectStateChanges as detectStateChangesPure,
+  computeFocusSet,
 } from './canvas/index'
 import { useCanvasCamera } from '@/hooks/use-canvas-camera'
 import { useCanvasInteraction } from '@/hooks/use-canvas-interaction'
@@ -84,6 +85,14 @@ export function AgentCanvas({
     activeEdgeIds: Set<string>
     edgeMap: Map<string, Edge>
   }>({ particles: [], edges: [], activeEdgeIds: new Set(), edgeMap: new Map() })
+
+  // Click-to-focus set cache — invalidates on selection change or edges
+  // collection replacement (new array identity from animateEdges/processEvent)
+  const focusSetCacheRef = useRef<{
+    selectedAgentId: string | null
+    edges: Edge[]
+    focusSet: Set<string> | null
+  }>({ selectedAgentId: null, edges: [], focusSet: null })
 
   // ─── Stable refs for animation loop & event handlers ────────────────────
   // Simulation data (agents, particles, etc.) is synced from simulationRef
@@ -265,11 +274,22 @@ export function AgentCanvas({
         edgeLookupCacheRef.current = { particles, edges, activeEdgeIds, edgeMap }
       }
 
+      // Click-to-focus set — recomputed only when selection or the edges
+      // collection reference changes (cheap O(edges), but no need every frame)
+      const fsCache = focusSetCacheRef.current
+      let focusSet: Set<string> | null
+      if (fsCache.selectedAgentId === selectedAgentId && fsCache.edges === edges) {
+        focusSet = fsCache.focusSet
+      } else {
+        focusSet = computeFocusSet(selectedAgentId, edges)
+        focusSetCacheRef.current = { selectedAgentId, edges, focusSet }
+      }
+
       drawDiscoveryConnections(ctx, discoveries, agents)
-      drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current)
-      drawToolCalls(ctx, toolCalls, timeRef.current, selectedToolCallId)
+      drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current, focusSet, selectedAgentId)
+      drawToolCalls(ctx, toolCalls, timeRef.current, selectedToolCallId, focusSet)
       drawDiscoveries(ctx, discoveries, agents, selectedDiscoveryId)
-      drawAgents(ctx, agents, selectedAgentId, hoveredAgentId, showStats, timeRef.current)
+      drawAgents(ctx, agents, selectedAgentId, hoveredAgentId, showStats, timeRef.current, focusSet)
       drawMessageBubblesWorld(ctx, agents, simTimeRef.current)
       if (showCostOverlay) drawCostLabels(ctx, agents, toolCalls)
       drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)

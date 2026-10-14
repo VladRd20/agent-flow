@@ -150,6 +150,12 @@ export const FORCE = {
   velocityDecay: 0.4,
 } as const
 
+// ─── Click-to-focus (local graph highlight) config ──────────────────────────
+
+/** Opacity multiplier applied to agents/edges/tool calls outside the
+ *  focused node's direct neighborhood when a node is selected. */
+export const FOCUS_DIM_ALPHA = 0.15
+
 // ─── Tool slot placement config ─────────────────────────────────────────────
 
 export const TOOL_SLOT = {
