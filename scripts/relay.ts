@@ -20,7 +20,7 @@ import {
   INACTIVITY_TIMEOUT_MS, SCAN_INTERVAL_MS, ACTIVE_SESSION_AGE_S, POLL_FALLBACK_MS,
   SESSION_ID_DISPLAY, SYSTEM_PROMPT_BASE_TOKENS, ORCHESTRATOR_NAME,
   HOOK_SERVER_NOT_STARTED, WORKSPACE_HASH_LENGTH,
-  SESSION_RETENTION_MS, SESSION_PRUNE_INTERVAL_MS,
+  SESSION_RETENTION_MS, SESSION_PRUNE_INTERVAL_MS, deriveAgentType,
 } from '../extension/src/constants'
 import { setLogLevel } from '../extension/src/logger'
 import type { TelemetryClient } from './telemetry'
@@ -183,7 +183,7 @@ function resetInactivityTimer(sessionId: string) {
     broadcastEvent({
       time: elapsed(sessionId),
       type: 'agent_spawn',
-      payload: { name: ORCHESTRATOR_NAME, isMain: true, task: session.label, ...(session.model ? { model: session.model } : {}) },
+      payload: { name: ORCHESTRATOR_NAME, isMain: true, agentType: deriveAgentType(true), task: session.label, ...(session.model ? { model: session.model } : {}) },
       sessionId,
     })
     broadcastSessionLifecycle('started', sessionId, session.label)
@@ -238,7 +238,7 @@ function watchSession(sessionId: string, filePath: string) {
   broadcastSessionLifecycle('started', sessionId, session.label)
   broadcastEvent({
     time: 0, type: 'agent_spawn',
-    payload: { name: ORCHESTRATOR_NAME, isMain: true, task: session.label, ...(session.model ? { model: session.model } : {}) },
+    payload: { name: ORCHESTRATOR_NAME, isMain: true, agentType: deriveAgentType(true), task: session.label, ...(session.model ? { model: session.model } : {}) },
     sessionId,
   })
   session.sessionDetected = true
