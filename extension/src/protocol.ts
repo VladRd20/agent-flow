@@ -137,7 +137,7 @@ export function emitSubagentSpawn(
   emitter.emit({
     time: emitter.elapsed(sessionId),
     type: 'agent_spawn',
-    payload: { name: child, parent, task },
+    payload: { name: child, parent, task, agentType: 'subagent' },
   }, sessionId)
 }
 

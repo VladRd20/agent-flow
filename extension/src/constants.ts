@@ -185,6 +185,22 @@ export const HOOK_SERVER_HOST = '127.0.0.1'
 /** Default agent name for the main orchestrator */
 export const ORCHESTRATOR_NAME = 'orchestrator'
 
+/** Broad agent category carried on `agent_spawn` events (the `agentType`
+ *  payload field) — lets the frontend color/group nodes without re-deriving
+ *  category from `isMain` or name-equality heuristics. Only two categories
+ *  exist today: there's no separate "tool-runner" node type because tool
+ *  calls are their own entity (ToolCallNode in web/lib/agent-types.ts), not
+ *  an Agent. */
+export type AgentCategory = 'orchestrator' | 'subagent'
+
+/** Derive the `agentType` category from the `isMain` flag already used to
+ *  pick the orchestrator's layout anchor (see session-watcher.ts,
+ *  hook-server.ts, codex-rollout-parser.ts). Kept as a single function so
+ *  the two fields can never drift apart across emission sites. */
+export function deriveAgentType(isMain: boolean | undefined): AgentCategory {
+  return isMain ? 'orchestrator' : 'subagent'
+}
+
 /** File-related tools that generate discovery events */
 export const FILE_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep'] as const
 

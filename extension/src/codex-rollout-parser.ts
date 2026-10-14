@@ -34,7 +34,7 @@
 import { AgentEvent } from './protocol'
 import {
   ORCHESTRATOR_NAME, HASH_PREFIX_MAX, MESSAGE_MAX, PREVIEW_MAX, RESULT_MAX,
-  SYSTEM_PROMPT_BASE_TOKENS, SYSTEM_CONTENT_PREFIXES,
+  SYSTEM_PROMPT_BASE_TOKENS, SYSTEM_CONTENT_PREFIXES, deriveAgentType,
 } from './constants'
 import {
   summarizeInput, summarizeResult, extractInputData, extractFilePath,
@@ -296,7 +296,7 @@ export class CodexRolloutParser {
     this.delegate.emit({
       time: this.delegate.elapsed(),
       type: 'agent_spawn',
-      payload: { name: ORCHESTRATOR_NAME, isMain: true, task: 'Codex session', runtime: 'codex' },
+      payload: { name: ORCHESTRATOR_NAME, isMain: true, agentType: deriveAgentType(true), task: 'Codex session', runtime: 'codex' },
     })
   }
 

@@ -5,7 +5,7 @@ import {
   ORCHESTRATOR_NAME, PREVIEW_MAX, RESULT_MAX,
   SESSION_ID_DISPLAY, FAILED_RESULT_MAX, HOOK_MAX_BODY_SIZE,
   SUBAGENT_ID_SUFFIX_LENGTH, HOOK_SERVER_HOST, HOOK_SERVER_NOT_STARTED,
-  generateSubagentFallbackName,
+  generateSubagentFallbackName, deriveAgentType,
 } from './constants'
 import { summarizeInput, summarizeResult, extractFilePath, buildDiscovery } from './tool-summarizer'
 import { estimateTokenCost } from './token-estimator'
@@ -189,6 +189,7 @@ export class HookServer implements vscode.Disposable {
       payload: {
         name: ORCHESTRATOR_NAME,
         isMain: true,
+        agentType: deriveAgentType(true),
         task: `Session ${payload.session_id.slice(0, SESSION_ID_DISPLAY)}`,
       },
     }, payload.session_id)

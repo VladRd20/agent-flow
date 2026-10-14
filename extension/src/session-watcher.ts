@@ -5,7 +5,7 @@ import * as os from 'os'
 import { AgentEvent, SessionInfo, WatchedSession } from './protocol'
 import {
   INACTIVITY_TIMEOUT_MS, SCAN_INTERVAL_MS, ACTIVE_SESSION_AGE_S, POLL_FALLBACK_MS,
-  SESSION_ID_DISPLAY, SYSTEM_PROMPT_BASE_TOKENS, ORCHESTRATOR_NAME,
+  SESSION_ID_DISPLAY, SYSTEM_PROMPT_BASE_TOKENS, ORCHESTRATOR_NAME, deriveAgentType,
 } from './constants'
 import type { AgentSessionWatcher, SessionLifecycleEvent } from './session-runtime'
 import { TranscriptParser } from './transcript-parser'
@@ -112,6 +112,7 @@ export class SessionWatcher implements AgentSessionWatcher {
         payload: {
           name: ORCHESTRATOR_NAME,
           isMain: true,
+          agentType: deriveAgentType(true),
           task: session.label,
           ...(session.model ? { model: session.model } : {}),
         },
@@ -121,7 +122,7 @@ export class SessionWatcher implements AgentSessionWatcher {
         if (session.spawnedSubagents.has(sub.agentName)) {
           const model = session.modelDetectedAgents.get(sub.agentName)
           this.emit({ time: 0, type: 'subagent_dispatch', payload: { parent: ORCHESTRATOR_NAME, child: sub.agentName, task: sub.agentName } }, sessionId)
-          this.emit({ time: 0, type: 'agent_spawn', payload: { name: sub.agentName, parent: ORCHESTRATOR_NAME, task: sub.agentName, ...(model ? { model } : {}) } }, sessionId)
+          this.emit({ time: 0, type: 'agent_spawn', payload: { name: sub.agentName, parent: ORCHESTRATOR_NAME, task: sub.agentName, agentType: deriveAgentType(false), ...(model ? { model } : {}) } }, sessionId)
         }
         sub.spawnEmitted = false
       }
@@ -438,6 +439,7 @@ export class SessionWatcher implements AgentSessionWatcher {
       payload: {
         name: ORCHESTRATOR_NAME,
         isMain: true,
+        agentType: deriveAgentType(true),
         task: session.label,
         ...(session.model ? { model: session.model } : {}),
       },
@@ -520,6 +522,7 @@ export class SessionWatcher implements AgentSessionWatcher {
         payload: {
           name: ORCHESTRATOR_NAME,
           isMain: true,
+          agentType: deriveAgentType(true),
           task: session.label,
           ...(session.model ? { model: session.model } : {}),
         },
