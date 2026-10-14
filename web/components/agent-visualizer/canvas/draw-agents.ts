@@ -1,7 +1,7 @@
 import { Agent, NODE, ANIM } from '@/lib/agent-types'
 import { COLORS, getStateColor, contextSegments } from '@/lib/colors'
 import {
-  AGENT_DRAW, CONTEXT_BAR, CONTEXT_RING, STATS_OVERLAY,
+  AGENT_DRAW, CONTEXT_BAR, CONTEXT_RING, STATS_OVERLAY, FOCUS_DIM_ALPHA,
 } from '@/lib/canvas-constants'
 import { alphaHex, formatTokens } from '@/lib/utils'
 import { truncateText, drawHexagon, CLAUDE_SPARK_D, OPENAI_LOGO_D, OPENAI_LOGO_VIEWBOX } from './draw-misc'
@@ -339,6 +339,9 @@ export function drawAgents(
   hoveredAgentId: string | null,
   showStats: boolean,
   time: number,
+  /** Click-to-focus set (selected node + direct neighbors). Null = no active
+   *  focus, everything draws at full opacity. See computeFocusSet(). */
+  focusSet: Set<string> | null = null,
 ) {
   for (const [id, agent] of agents) {
     const radius = agent.isMain ? NODE.radiusMain : NODE.radiusSub
@@ -356,8 +359,14 @@ export function drawAgents(
 
     const r = radius * breathe * agent.scale
 
+    // Focus dimming is a pure rendering multiplier on top of the agent's own
+    // fade-in/out opacity (agent.opacity) — it never touches the animation
+    // model's target-opacity state, so it can't regress the session-switch
+    // replay fade-in fix in animate.ts.
+    const dimMultiplier = focusSet && !focusSet.has(id) ? FOCUS_DIM_ALPHA : 1
+
     ctx.save()
-    ctx.globalAlpha = agent.opacity
+    ctx.globalAlpha = agent.opacity * dimMultiplier
 
     drawDepthShadow(ctx, agent, r)
     drawAgentGlow(ctx, agent, r, color, isHovered, isSelected, isWaiting)

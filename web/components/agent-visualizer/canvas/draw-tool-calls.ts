@@ -1,6 +1,6 @@
 import { ToolCallNode } from '@/lib/agent-types'
 import { COLORS, withAlpha } from '@/lib/colors'
-import { TOOL_MAX_CARD_W, TOOL_DRAW } from '@/lib/canvas-constants'
+import { TOOL_MAX_CARD_W, TOOL_DRAW, FOCUS_DIM_ALPHA } from '@/lib/canvas-constants'
 import { truncateText } from './draw-misc'
 import { measureTextCached } from './render-cache'
 
@@ -9,14 +9,18 @@ export function drawToolCalls(
   toolCalls: Map<string, ToolCallNode>,
   time: number,
   selectedToolCallId?: string | null,
+  /** Click-to-focus set (selected agent node + direct neighbors). Null = no
+   *  active focus. A tool call dims unless it's in the focused neighborhood. */
+  focusSet: Set<string> | null = null,
 ) {
   for (const [id, tool] of toolCalls) {
     const isRunning = tool.state === 'running'
     const isError = tool.state === 'error'
     const pulse = isRunning ? Math.sin(time * 4) * 0.2 + 0.8 : isError ? Math.sin(time * 6) * 0.15 + 0.85 : 0.5
+    const dimMultiplier = focusSet && !focusSet.has(id) ? FOCUS_DIM_ALPHA : 1
 
     ctx.save()
-    ctx.globalAlpha = tool.opacity
+    ctx.globalAlpha = tool.opacity * dimMultiplier
 
     ctx.font = `${TOOL_DRAW.fontSize}px monospace`
     const toolLabel = `${tool.toolName}: ${tool.args}`

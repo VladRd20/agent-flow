@@ -1,7 +1,7 @@
 import { Agent, ToolCallNode, Particle, Edge, BEAM, ANIM } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { alphaHex } from '@/lib/utils'
-import { MIN_VISIBLE_OPACITY } from '@/lib/canvas-constants'
+import { MIN_VISIBLE_OPACITY, FOCUS_DIM_ALPHA } from '@/lib/canvas-constants'
 
 export function bezierPoint(t: number, p0: number, p1: number, p2: number, p3: number) {
   const mt = 1 - t
@@ -105,6 +105,10 @@ export function drawEdges(
   toolCalls: Map<string, ToolCallNode>,
   activeEdgeIds: Set<string>,
   time: number,
+  /** Click-to-focus set (selected node + direct neighbors). Null = no active
+   *  focus. An edge dims unless it directly touches the selected node. */
+  focusSet: Set<string> | null = null,
+  selectedAgentId: string | null = null,
 ) {
   for (const edge of edges) {
     const fromAgent = agents.get(edge.from)
@@ -126,16 +130,23 @@ export function drawEdges(
     const beamColor = edge.type === 'tool' ? COLORS.tool : COLORS.holoBase
     const bw = edge.type === 'tool' ? BEAM.tool : BEAM.parentChild
 
+    // An edge is "in focus" only if it's directly incident to the selected
+    // node — not merely because both endpoints happen to be in focusSet
+    // (which also contains the selected node's neighbors, who may be linked
+    // to each other without that link touching the selected node itself).
+    const dimMultiplier = focusSet && !(edge.from === selectedAgentId || edge.to === selectedAgentId)
+      ? FOCUS_DIM_ALPHA : 1
+
     ctx.save()
 
     // Tapered beam: wider at source, thin at destination
     drawTaperedBezier(ctx, fromX, fromY, cp1x, cp1y, cp2x, cp2y, toX, toY,
-      bw.startW, bw.endW, beamColor, baseAlpha * pulsing)
+      bw.startW, bw.endW, beamColor, baseAlpha * pulsing * dimMultiplier)
 
     // Active glow beam (wider, dimmer)
     if (hasActiveParticles) {
       drawTaperedBezier(ctx, fromX, fromY, cp1x, cp1y, cp2x, cp2y, toX, toY,
-        bw.startW + BEAM.glowExtra.startW, bw.endW + BEAM.glowExtra.endW, beamColor, BEAM.glowExtra.alpha)
+        bw.startW + BEAM.glowExtra.startW, bw.endW + BEAM.glowExtra.endW, beamColor, BEAM.glowExtra.alpha * dimMultiplier)
     }
 
     ctx.restore()
