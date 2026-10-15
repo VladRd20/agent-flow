@@ -186,6 +186,34 @@ export const NODE_SIZE = {
   maxMultiplier: 1.6,
 } as const
 
+// ─── Craft: eased focus/dim, node-size, and label-crossfade transitions ────
+// These were previously instant — a click/hover applied FOCUS_DIM_ALPHA /
+// HOVER_DIM_ALPHA as a straight multiply with no interpolation, and a new
+// subagent's degree-based size multiplier applied in full the very first
+// frame it appeared. Rates below are alpha/size-multiplier units per
+// second, consumed by EasedValueMap.step() (approach-the-target, no
+// overshoot — see eased-value-map.ts for why this reads as "spring-like").
+
+/** Focus/hover dim alpha ease rate (opacity units/sec). ~0.2s to settle at
+ *  the FOCUS_DIM_ALPHA/HOVER_DIM_ALPHA target — fast enough to feel like
+ *  direct feedback, slow enough to read as a transition rather than a cut. */
+export const DIM_EASE_RATE = 5
+
+/** Degree-based node-size multiplier ease rate (multiplier units/sec). */
+export const NODE_SIZE_EASE_RATE = 4
+
+/** Multiplies DIM_EASE_RATE/NODE_SIZE_EASE_RATE under prefers-reduced-motion
+ *  — collapses the transition to a brief, gentle cross-fade (still eased,
+ *  never a hard snap) instead of the full-length spring-like approach. */
+export const REDUCED_MOTION_EASE_MULTIPLIER = 8
+
+/** Half-width (in camera zoom-scale units) of the smooth crossfade band
+ *  around LABEL_ZOOM_THRESHOLD. Replaces the hard visible/hidden cutoff
+ *  with a continuous fade as the user zooms past the threshold — driven
+ *  directly by zoom scale (itself already eased by the camera), so no
+ *  extra per-frame state is needed here. */
+export const LABEL_ZOOM_BAND = 0.08
+
 // ─── Bloom tuning (soft Obsidian-style glow, not a heavy bloom) ────────────
 
 /** Post-process bloom intensity passed to BloomRenderer — the blur-radius/

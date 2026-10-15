@@ -2,6 +2,7 @@ import { Agent, ToolCallNode, Particle, Edge, BEAM, ANIM } from '@/lib/agent-typ
 import { COLORS } from '@/lib/colors'
 import { alphaHex } from '@/lib/utils'
 import { MIN_VISIBLE_OPACITY, FOCUS_DIM_ALPHA } from '@/lib/canvas-constants'
+import type { EaseContext } from './eased-value-map'
 
 export function bezierPoint(t: number, p0: number, p1: number, p2: number, p3: number) {
   const mt = 1 - t
@@ -113,6 +114,9 @@ export function drawEdges(
   /** Opacity multiplier for edges outside the focus set — FOCUS_DIM_ALPHA
    *  for a firm click-selection, HOVER_DIM_ALPHA for a lighter hover preview. */
   dimAlpha: number = FOCUS_DIM_ALPHA,
+  /** Per-id dim-alpha easing (same EasedValueMap instance style used by
+   *  drawAgents/drawToolCalls). Undefined = apply the target instantly. */
+  ease?: EaseContext,
 ) {
   for (const edge of edges) {
     const fromAgent = agents.get(edge.from)
@@ -138,8 +142,11 @@ export function drawEdges(
     // node — not merely because both endpoints happen to be in focusSet
     // (which also contains the selected node's neighbors, who may be linked
     // to each other without that link touching the selected node itself).
-    const dimMultiplier = focusSet && !(edge.from === selectedAgentId || edge.to === selectedAgentId)
+    const targetDimMultiplier = focusSet && !(edge.from === selectedAgentId || edge.to === selectedAgentId)
       ? dimAlpha : 1
+    const dimMultiplier = ease
+      ? ease.dimMap.step(`edge:${edge.id}`, targetDimMultiplier, ease.rate, ease.deltaTime, 1)
+      : targetDimMultiplier
 
     ctx.save()
 

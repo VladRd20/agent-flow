@@ -12,3 +12,5 @@ export { findAgentAt, findToolCallAt, findBubbleAgentAt, findDiscoveryAt } from 
 export { detectStateChanges } from './detect-state-changes'
 export { computeFocusSet } from './compute-focus'
 export { computeDegreeMap, getNodeSizeMultiplier } from './node-size'
+export { EasedValueMap } from './eased-value-map'
+export type { EaseContext } from './eased-value-map'

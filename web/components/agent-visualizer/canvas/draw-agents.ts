@@ -1,12 +1,25 @@
 import { Agent, NODE, ANIM } from '@/lib/agent-types'
 import { COLORS, getStateColor, getAgentGroupColor, contextSegments } from '@/lib/colors'
 import {
-  AGENT_DRAW, CONTEXT_BAR, CONTEXT_RING, STATS_OVERLAY, FOCUS_DIM_ALPHA, LABEL_ZOOM_THRESHOLD,
+  AGENT_DRAW, CONTEXT_BAR, CONTEXT_RING, STATS_OVERLAY, FOCUS_DIM_ALPHA, LABEL_ZOOM_THRESHOLD, LABEL_ZOOM_BAND,
 } from '@/lib/canvas-constants'
 import { alphaHex, formatTokens } from '@/lib/utils'
 import { truncateText, drawHexagon, CLAUDE_SPARK_D, OPENAI_LOGO_D, OPENAI_LOGO_VIEWBOX } from './draw-misc'
 import { getAgentGlowSprite } from './render-cache'
 import { getNodeSizeMultiplier } from './node-size'
+import type { EaseContext } from './eased-value-map'
+
+/** Smoothstep crossfade for the zoom-based label cutoff — continuous in
+ *  zoomScale rather than a hard >= threshold cutoff, so labels fade in/out
+ *  as the user zooms instead of popping. */
+function labelZoomAlpha(zoomScale: number): number {
+  const lo = LABEL_ZOOM_THRESHOLD - LABEL_ZOOM_BAND
+  const hi = LABEL_ZOOM_THRESHOLD + LABEL_ZOOM_BAND
+  if (zoomScale <= lo) return 0
+  if (zoomScale >= hi) return 1
+  const t = (zoomScale - lo) / (hi - lo)
+  return t * t * (3 - 2 * t)
+}
 
 let _claudeSparkPath: Path2D | null = null
 export function getClaudeSparkPath() {
@@ -346,7 +359,9 @@ function drawWaitingRipples(ctx: CanvasRenderingContext2D, agent: Agent, r: numb
   }
 }
 
-function drawAgentLabel(ctx: CanvasRenderingContext2D, agent: Agent, r: number, isHovered: boolean) {
+function drawAgentLabel(ctx: CanvasRenderingContext2D, agent: Agent, r: number, isHovered: boolean, alpha: number = 1) {
+  ctx.save()
+  ctx.globalAlpha *= alpha
   ctx.fillStyle = isHovered ? COLORS.textPrimary : COLORS.textDim
   ctx.font = '10px monospace'
   ctx.textAlign = 'center'
@@ -354,6 +369,7 @@ function drawAgentLabel(ctx: CanvasRenderingContext2D, agent: Agent, r: number, 
   const maxLabelW = r * AGENT_DRAW.labelWidthMultiplier
   const agentLabel = truncateText(ctx, agent.name, maxLabelW)
   ctx.fillText(agentLabel, agent.x, agent.y + r + AGENT_DRAW.labelYOffset)
+  ctx.restore()
 }
 
 function drawStatsOverlay(ctx: CanvasRenderingContext2D, agent: Agent, r: number) {
@@ -394,6 +410,10 @@ export function drawAgents(
   /** Opacity multiplier for agents outside the focus set — FOCUS_DIM_ALPHA
    *  for a click-selection, HOVER_DIM_ALPHA for a lighter hover preview. */
   dimAlpha: number = FOCUS_DIM_ALPHA,
+  /** Per-id easing for the dim multiplier and degree-based size multiplier.
+   *  Undefined = apply both targets instantly (used by tests/callers that
+   *  don't track per-frame state). */
+  ease?: EaseContext,
 ) {
   for (const [id, agent] of agents) {
     const radius = agent.isMain ? NODE.radiusMain : NODE.radiusSub
@@ -411,14 +431,23 @@ export function drawAgents(
       ? Math.sin(time * ANIM.breathe.thinkingSpeed) * ANIM.breathe.thinkingAmp + 1
       : agent.state === 'idle' ? Math.sin(time * ANIM.breathe.idleSpeed) * ANIM.breathe.idleAmp + 1 : 1
 
-    const sizeMultiplier = degreeMap ? getNodeSizeMultiplier(id, degreeMap) : 1
+    const targetSizeMultiplier = degreeMap ? getNodeSizeMultiplier(id, degreeMap) : 1
+    const sizeMultiplier = ease?.sizeMap
+      ? ease.sizeMap.step(`agent:${id}`, targetSizeMultiplier, ease.sizeRate ?? ease.rate, ease.deltaTime, 1)
+      : targetSizeMultiplier
     const r = radius * breathe * agent.scale * sizeMultiplier
 
     // Focus dimming is a pure rendering multiplier on top of the agent's own
     // fade-in/out opacity (agent.opacity) — it never touches the animation
     // model's target-opacity state, so it can't regress the session-switch
-    // replay fade-in fix in animate.ts.
-    const dimMultiplier = focusSet && !isFocused ? dimAlpha : 1
+    // replay fade-in fix in animate.ts. Eased per-id (when `ease` is
+    // supplied) so a click/hover change fades the dim in/out instead of
+    // snapping — and because it's always read from the current on-screen
+    // value, re-focusing mid-transition just retargets, never jumps.
+    const targetDimMultiplier = focusSet && !isFocused ? dimAlpha : 1
+    const dimMultiplier = ease
+      ? ease.dimMap.step(`agent:${id}`, targetDimMultiplier, ease.rate, ease.deltaTime, 1)
+      : targetDimMultiplier
 
     ctx.save()
     ctx.globalAlpha = agent.opacity * dimMultiplier
@@ -439,10 +468,13 @@ export function drawAgents(
     }
 
     // Labels: always show for the orchestrator, a hovered/selected node, or
-    // anything in the active focus set; otherwise hide sub-agent labels at
-    // low zoom to avoid cluttering dense graphs (Obsidian-style density).
-    const showLabel = agent.isMain || isHovered || isSelected || (focusSet ? isFocused : zoomScale >= LABEL_ZOOM_THRESHOLD)
-    if (showLabel) drawAgentLabel(ctx, agent, r, isHovered)
+    // anything in the active focus set; otherwise sub-agent labels crossfade
+    // out at low zoom (smoothstep band around LABEL_ZOOM_THRESHOLD) instead
+    // of popping at a hard cutoff, to keep dense graphs readable
+    // (Obsidian-style density).
+    const forcedLabel = agent.isMain || isHovered || isSelected || (focusSet ? isFocused : false)
+    const labelAlpha = forcedLabel ? 1 : labelZoomAlpha(zoomScale)
+    if (labelAlpha > 0.01) drawAgentLabel(ctx, agent, r, isHovered, labelAlpha)
 
     // Context composition — ring for main agent, bar for sub-agents
     if (agent.state !== 'complete' || agent.opacity > 0.5) {
