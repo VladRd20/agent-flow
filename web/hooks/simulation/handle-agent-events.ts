@@ -17,6 +17,16 @@ export function handleAgentSpawn(
   const name = asString(payload.name)
   const parentId = typeof payload.parent === 'string' ? payload.parent : undefined
   const isMain = asBoolean(payload.isMain)
+  // agentType ('orchestrator'|'subagent') is emitted alongside isMain as a
+  // second, independent encoding of the same distinction (see
+  // extension/src/constants.ts deriveAgentType). There's no shared
+  // schema tying the two together across the wire (payload is
+  // Record<string, unknown> end to end), so cross-check them here — a
+  // disagreement means one emission site derived the category wrong.
+  const agentType = typeof payload.agentType === 'string' ? payload.agentType : undefined
+  if (agentType && agentType !== (isMain ? 'orchestrator' : 'subagent')) {
+    console.warn(`agent_spawn: agentType "${agentType}" disagrees with isMain=${isMain} for "${payload.name}"`)
+  }
   const task = typeof payload.task === 'string' ? payload.task : undefined
   const model = typeof payload.model === 'string' ? payload.model : undefined
   const runtime = payload.runtime === 'codex' ? 'codex' as const : undefined

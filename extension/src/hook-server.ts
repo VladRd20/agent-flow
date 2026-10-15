@@ -265,10 +265,14 @@ export class HookServer implements vscode.Disposable {
     // which produces the user-facing name.  Emitting a second spawn from the
     // hook creates a duplicate node with a generic name like
     // "general-purpose-ab75a" alongside the correctly-named node.
-    const agentType = payload.agent_type || 'subagent'
+    // Claude Code's subagent *persona* (e.g. "general-purpose", "code-reviewer")
+    // — unrelated to the broad orchestrator/subagent AgentCategory carried as
+    // the `agentType` payload field elsewhere in this file (line ~192). Named
+    // distinctly so the two don't get confused via grep/search.
+    const subagentPersona = payload.agent_type || 'subagent'
     const agentId = payload.agent_id || ''
     const sessionAgents = this.getOrCreateSession(payload.session_id).agentNames
-    const childName = agentId ? `${agentType}-${agentId.slice(-SUBAGENT_ID_SUFFIX_LENGTH)}` : generateSubagentFallbackName(String(Date.now()), sessionAgents.size + 1)
+    const childName = agentId ? `${subagentPersona}-${agentId.slice(-SUBAGENT_ID_SUFFIX_LENGTH)}` : generateSubagentFallbackName(String(Date.now()), sessionAgents.size + 1)
 
     sessionAgents.set(agentId, childName)
   }

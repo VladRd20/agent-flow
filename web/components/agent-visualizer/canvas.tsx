@@ -87,19 +87,42 @@ export function AgentCanvas({
     edgeMap: Map<string, Edge>
   }>({ particles: [], edges: [], activeEdgeIds: new Set(), edgeMap: new Map() })
 
+  // Edge *topology* signature (just the id set, joined), separate from the
+  // edges array's object identity. animateEdges() (simulation/animate.ts)
+  // returns a brand-new array + new edge objects via .map() every frame
+  // that ANY edge is still fading in (opacity < 1) — common in an active
+  // multi-agent session, since new parent-child/tool edges spawn in fading
+  // continuously. The focus-set/degree-map caches below only care about
+  // which edges exist (from/to pairs), never their opacity, so keying
+  // invalidation on array reference was recomputing both from scratch
+  // every single frame during any fade, not "only when edges actually
+  // change" as the old comments claimed. The id-join itself still costs
+  // O(edges), but it's far cheaper than rebuilding a Map/traversing the
+  // graph, and it's skipped entirely via the reference fast-path below
+  // once a fade settles and animateEdges starts returning the same array
+  // again.
+  const edgeTopologyKeyRef = useRef<{ edges: Edge[]; key: string }>({ edges: [], key: '' })
+  const getEdgesTopologyKey = (edges: Edge[]): string => {
+    const cache = edgeTopologyKeyRef.current
+    if (cache.edges === edges) return cache.key
+    const key = edges.map(e => e.id).join(',')
+    edgeTopologyKeyRef.current = { edges, key }
+    return key
+  }
+
   // Click-to-focus set cache — invalidates on the active focus id (selection
-  // takes priority over hover) or edges collection replacement (new array
-  // identity from animateEdges/processEvent).
+  // takes priority over hover) or a real edge-topology change, not just a
+  // new array identity.
   const focusSetCacheRef = useRef<{
     focusId: string | null
-    edges: Edge[]
+    edgesKey: string
     focusSet: Set<string> | null
-  }>({ focusId: null, edges: [], focusSet: null })
+  }>({ focusId: null, edgesKey: '', focusSet: null })
 
   // Degree-map cache (connected-edge count per agent, for Obsidian-style node
-  // sizing) — invalidates only when the edges collection reference changes.
-  const degreeMapCacheRef = useRef<{ edges: Edge[]; degreeMap: Map<string, number> }>({
-    edges: [], degreeMap: new Map(),
+  // sizing) — invalidates only when the edge topology actually changes.
+  const degreeMapCacheRef = useRef<{ edgesKey: string; degreeMap: Map<string, number> }>({
+    edgesKey: '', degreeMap: new Map(),
   })
 
   // ─── Stable refs for animation loop & event handlers ────────────────────
@@ -283,27 +306,32 @@ export function AgentCanvas({
       }
 
       // Click-to-focus set — recomputed only when the active focus id or the
-      // edges collection reference changes (cheap O(edges), but no need
-      // every frame). Selection wins over hover; hovering gets the same
-      // local-graph set but a lighter dim (HOVER_DIM_ALPHA) so it reads as a
-      // preview rather than the firmer click state.
-      const focusId = selectedAgentId ?? hoveredAgentId
+      // edge *topology* changes, not on every fade-driven array identity
+      // change (see edgeTopologyKeyRef above). Selection wins over hover;
+      // hovering gets the same local-graph set but a lighter dim
+      // (HOVER_DIM_ALPHA) so it reads as a preview rather than the firmer
+      // click state. A selected tool-call node focuses its local graph too
+      // (computeFocusSet works off any id in the edge graph, agent or
+      // tool-call) — selecting a tool call used to leave the whole canvas
+      // undimmed, the only selection type that didn't trigger focus.
+      const focusId = selectedAgentId ?? selectedToolCallId ?? hoveredAgentId
+      const edgesKey = getEdgesTopologyKey(edges)
       const fsCache = focusSetCacheRef.current
       let focusSet: Set<string> | null
-      if (fsCache.focusId === focusId && fsCache.edges === edges) {
+      if (fsCache.focusId === focusId && fsCache.edgesKey === edgesKey) {
         focusSet = fsCache.focusSet
       } else {
         focusSet = computeFocusSet(focusId, edges)
-        focusSetCacheRef.current = { focusId, edges, focusSet }
+        focusSetCacheRef.current = { focusId, edgesKey, focusSet }
       }
       const dimAlpha = selectedAgentId ? FOCUS_DIM_ALPHA : HOVER_DIM_ALPHA
 
       // Degree map (connected-edge count per agent) for node sizing —
-      // recomputed only when the edges collection reference changes.
+      // recomputed only when the edge topology actually changes.
       const dmCache = degreeMapCacheRef.current
-      const degreeMap = dmCache.edges === edges ? dmCache.degreeMap : (() => {
+      const degreeMap = dmCache.edgesKey === edgesKey ? dmCache.degreeMap : (() => {
         const computed = computeDegreeMap(edges)
-        degreeMapCacheRef.current = { edges, degreeMap: computed }
+        degreeMapCacheRef.current = { edgesKey, degreeMap: computed }
         return computed
       })()
 

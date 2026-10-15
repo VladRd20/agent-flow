@@ -222,10 +222,21 @@ function drawScanline(ctx: CanvasRenderingContext2D, agent: Agent, r: number, co
 }
 
 function drawStateRing(ctx: CanvasRenderingContext2D, agent: Agent, r: number, groupColor: string, isHovered: boolean, isSelected: boolean, isWaiting: boolean, time: number) {
-  // The ring is the node's group/category identity by default, but an error
-  // overrides it outright — a failing node must read as "wrong" at a glance,
-  // not just as its usual orchestrator/subagent/model color.
-  const ringColor = agent.state === 'error' ? COLORS.error : groupColor
+  // The ring is the node's group/category identity by default, but several
+  // states override it outright: error (must read as "wrong" at a glance),
+  // and tool_calling/paused/complete — these used to be the node's *only*
+  // color signal pre-redesign, and icon shape/dash pattern alone weren't
+  // enough to carry that distinction once the ring stopped changing hue
+  // (a tool-calling node and an idle one became visually identical when
+  // both happened to be the same model family). Idle/thinking/waiting keep
+  // the group color since those already have their own secondary signals
+  // (breathing animation, lock+ripples) and reverting them would undo the
+  // redesign's point of giving a node a stable identity color.
+  const ringColor = agent.state === 'error' ? COLORS.error
+    : agent.state === 'tool_calling' ? COLORS.tool_calling
+    : agent.state === 'paused' ? COLORS.paused
+    : agent.state === 'complete' ? COLORS.complete
+    : groupColor
 
   drawHexagon(ctx, agent.x, agent.y, r)
   ctx.strokeStyle = ringColor

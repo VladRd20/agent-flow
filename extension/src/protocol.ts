@@ -5,6 +5,8 @@
  * Webview → Extension: user commands (inject, connect/disconnect)
  */
 
+import { deriveAgentType } from './constants'
+
 // ─── Agent Event Types (from real agent sessions) ────────────────────────────
 
 export type AgentEventType =
@@ -137,7 +139,12 @@ export function emitSubagentSpawn(
   emitter.emit({
     time: emitter.elapsed(sessionId),
     type: 'agent_spawn',
-    payload: { name: child, parent, task, agentType: 'subagent' },
+    // This helper only ever spawns a child/subagent (never the
+    // orchestrator itself), so isMain is always false here — but route it
+    // through deriveAgentType() anyway rather than hardcoding the literal,
+    // so this site can't drift from the other emission sites if the
+    // category logic ever changes.
+    payload: { name: child, parent, task, agentType: deriveAgentType(false) },
   }, sessionId)
 }
 
