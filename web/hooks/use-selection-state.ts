@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import type { Agent, ToolCallNode, Discovery } from "@/lib/agent-types"
 
 export interface ToolDataSnapshot {
@@ -55,6 +55,27 @@ export function useSelectionState(deps: {
     setSelectedAgentId(null)
     setSelectedAgentWorldPos(null)
   }, [])
+
+  // A selected/hovered agent can be pruned out of `agents` (animate.ts's
+  // cleanupFaded() removes completed sub-agents once their fade-out
+  // finishes) without any explicit deselect action ever firing. Left
+  // dangling, computeFocusSet(selectedAgentId, edges) keeps returning
+  // Set([deadId]) forever — every currently-drawn node/edge fails the
+  // focus check and the whole canvas dims to FOCUS_DIM_ALPHA with nothing
+  // actually highlighted, since the "selected" node no longer exists to
+  // draw. Clear the selection the moment its id drops out of `agents`.
+  useEffect(() => {
+    if (selectedAgentId && !agents.has(selectedAgentId)) {
+      setSelectedAgentId(null)
+      setSelectedAgentWorldPos(null)
+    }
+  }, [agents, selectedAgentId])
+
+  useEffect(() => {
+    if (hoveredAgentId && !agents.has(hoveredAgentId)) {
+      setHoveredAgentId(null)
+    }
+  }, [agents, hoveredAgentId])
 
   const clearTool = useCallback(() => {
     setSelectedToolCallId(null)
