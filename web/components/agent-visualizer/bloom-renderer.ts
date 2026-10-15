@@ -39,9 +39,19 @@ export class BloomRenderer {
 
     if (w === 0 || h === 0 || !this.enabled) return
 
-    // Draw source at half resolution
+    // Draw source at half resolution, thresholded so only genuinely bright
+    // pixels (node strokes, glow sprites, beams) feed the bloom buffer.
+    // Without this, the *whole* scene — including hard edges and label
+    // text — gets a blurred duplicate composited back on top of itself,
+    // which reads as the entire canvas being soft/blurry rather than as a
+    // glow around bright elements. brightness(0.5) first dims everything,
+    // then contrast(300%) crushes anything still below mid-gray to black
+    // while pushing genuinely bright pixels up — a cheap luminance
+    // threshold using only standard canvas filters.
     this.bloomCtx.clearRect(0, 0, w, h)
+    this.bloomCtx.filter = 'brightness(0.5) contrast(300%)'
     this.bloomCtx.drawImage(sourceCanvas, 0, 0, w, h)
+    this.bloomCtx.filter = 'none'
 
     // Apply blur passes (box blur approximation of gaussian)
     this.boxBlur(this.bloomCtx, this.tempCtx, w, h, 8)
