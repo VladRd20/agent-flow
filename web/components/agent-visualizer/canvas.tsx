@@ -21,9 +21,12 @@ import {
   detectStateChanges as detectStateChangesPure,
   computeFocusSet,
   computeDegreeMap,
+  EasedValueMap,
 } from './canvas/index'
 import { useCanvasCamera } from '@/hooks/use-canvas-camera'
 import { useCanvasInteraction } from '@/hooks/use-canvas-interaction'
+import { prefersReducedMotion, subscribeReducedMotion } from '@/lib/reduced-motion'
+import { DIM_EASE_RATE, NODE_SIZE_EASE_RATE, REDUCED_MOTION_EASE_MULTIPLIER } from '@/lib/canvas-constants'
 
 interface CanvasProps {
   /** Ref to simulation state — read every frame without React re-renders */
@@ -102,6 +105,16 @@ export function AgentCanvas({
     edges: [], degreeMap: new Map(),
   })
 
+  // Eased focus/hover-dim and degree-based size-multiplier state, per
+  // agent/edge/tool-call id. Previously these were applied as an instant
+  // multiply straight to the target the frame focus/degree changed; now
+  // each id approaches its target at DIM_EASE_RATE / NODE_SIZE_EASE_RATE
+  // per second, read from the live on-screen value every frame (so a second
+  // click/hover mid-transition retargets instead of snapping).
+  const dimEaseMapRef = useRef(new EasedValueMap())
+  const sizeEaseMapRef = useRef(new EasedValueMap())
+  const reducedMotionRef = useRef(prefersReducedMotion())
+
   // ─── Stable refs for animation loop & event handlers ────────────────────
   // Simulation data (agents, particles, etc.) is synced from simulationRef
   // at the top of each draw frame, so it's always fresh even without re-renders.
@@ -146,6 +159,14 @@ export function AgentCanvas({
     depthParticlesRef.current = createDepthParticles(dimensions.width, dimensions.height)
     return () => { bloomRef.current = null }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- particles created once, resized by draw loop
+  }, [])
+
+  // Keep reducedMotionRef current if the OS setting changes mid-session —
+  // the draw loop reads the ref directly so no re-render is needed.
+  useEffect(() => {
+    return subscribeReducedMotion(() => {
+      reducedMotionRef.current = prefersReducedMotion()
+    })
   }, [])
 
   useEffect(() => {
@@ -307,11 +328,25 @@ export function AgentCanvas({
         return computed
       })()
 
+      // Shared per-id easing for focus/hover dim + degree-based size — see
+      // eased-value-map.ts. Rate collapses under prefers-reduced-motion to a
+      // brief, gentle cross-fade (never a hard snap, never a bouncy spring).
+      const reducedMotionMult = reducedMotionRef.current ? REDUCED_MOTION_EASE_MULTIPLIER : 1
+      const dimEaseRate = DIM_EASE_RATE * reducedMotionMult
+      const sizeEaseRate = NODE_SIZE_EASE_RATE * reducedMotionMult
+      const dimEase = { dimMap: dimEaseMapRef.current, rate: dimEaseRate, deltaTime }
+      const agentEase = { dimMap: dimEaseMapRef.current, sizeMap: sizeEaseMapRef.current, rate: dimEaseRate, sizeRate: sizeEaseRate, deltaTime }
+
       drawDiscoveryConnections(ctx, discoveries, agents)
-      drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current, focusSet, selectedAgentId ?? hoveredAgentId, dimAlpha)
-      drawToolCalls(ctx, toolCalls, timeRef.current, selectedToolCallId, focusSet, dimAlpha)
+      drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current, focusSet, selectedAgentId ?? hoveredAgentId, dimAlpha, dimEase)
+      drawToolCalls(ctx, toolCalls, timeRef.current, selectedToolCallId, focusSet, dimAlpha, dimEase)
       drawDiscoveries(ctx, discoveries, agents, selectedDiscoveryId)
-      drawAgents(ctx, agents, selectedAgentId, hoveredAgentId, showStats, timeRef.current, focusSet, degreeMap, transform.scale, dimAlpha)
+      drawAgents(ctx, agents, selectedAgentId, hoveredAgentId, showStats, timeRef.current, focusSet, degreeMap, transform.scale, dimAlpha, agentEase)
+
+      // Drop ids that weren't drawn this frame (agent/edge/tool removed) so
+      // the eased-value maps don't grow unbounded over a long session.
+      dimEaseMapRef.current.sweep()
+      sizeEaseMapRef.current.sweep()
       drawMessageBubblesWorld(ctx, agents, simTimeRef.current)
       if (showCostOverlay) drawCostLabels(ctx, agents, toolCalls)
       drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)

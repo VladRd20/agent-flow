@@ -3,6 +3,7 @@ import { COLORS, withAlpha } from '@/lib/colors'
 import { TOOL_MAX_CARD_W, TOOL_DRAW, FOCUS_DIM_ALPHA } from '@/lib/canvas-constants'
 import { truncateText } from './draw-misc'
 import { measureTextCached } from './render-cache'
+import type { EaseContext } from './eased-value-map'
 
 export function drawToolCalls(
   ctx: CanvasRenderingContext2D,
@@ -16,12 +17,18 @@ export function drawToolCalls(
   /** Opacity multiplier for tool calls outside the focus set —
    *  FOCUS_DIM_ALPHA for a click-selection, HOVER_DIM_ALPHA for hover. */
   dimAlpha: number = FOCUS_DIM_ALPHA,
+  /** Per-id dim-alpha easing (same EasedValueMap instance style used by
+   *  drawAgents/drawEdges). Undefined = apply the target instantly. */
+  ease?: EaseContext,
 ) {
   for (const [id, tool] of toolCalls) {
     const isRunning = tool.state === 'running'
     const isError = tool.state === 'error'
     const pulse = isRunning ? Math.sin(time * 4) * 0.2 + 0.8 : isError ? Math.sin(time * 6) * 0.15 + 0.85 : 0.5
-    const dimMultiplier = focusSet && !focusSet.has(id) ? dimAlpha : 1
+    const targetDimMultiplier = focusSet && !focusSet.has(id) ? dimAlpha : 1
+    const dimMultiplier = ease
+      ? ease.dimMap.step(`tool:${id}`, targetDimMultiplier, ease.rate, ease.deltaTime, 1)
+      : targetDimMultiplier
 
     ctx.save()
     ctx.globalAlpha = tool.opacity * dimMultiplier
