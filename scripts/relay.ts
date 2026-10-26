@@ -26,6 +26,10 @@ import { setLogLevel } from '../extension/src/logger'
 import type { TelemetryClient } from './telemetry'
 
 const MAX_EVENT_BUFFER = 50000
+const MAX_BUFFERED_SESSIONS = 200
+const SSE_HEARTBEAT_MS = 25_000
+/** Drop SSE clients whose socket write buffer exceeds this (stalled/slow consumers). */
+const SSE_MAX_WRITABLE_BYTES = 16 * 1024 * 1024
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow')
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects')
 
@@ -71,7 +75,15 @@ function sendSSE(res: http.ServerResponse, data: unknown) {
 
 function broadcast(data: string) {
   for (const res of sseClients) {
-    try { res.write(`data: ${data}\n\n`) } catch {
+    try {
+      // Slow/stalled consumer: drop it rather than buffer unboundedly in memory.
+      if (res.writableLength > SSE_MAX_WRITABLE_BYTES) {
+        sseClients.delete(res)
+        res.destroy()
+        continue
+      }
+      res.write(`data: ${data}\n\n`)
+    } catch {
       sseClients.delete(res)
     }
   }
@@ -91,12 +103,19 @@ function broadcastEvent(event: AgentEvent) {
   log(`[event] ${event.type} (session ${sid})`)
 
   if (event.sessionId) {
-    let buf = eventBuffer.get(event.sessionId) || []
-    buf.push(event)
-    if (buf.length > MAX_EVENT_BUFFER) {
-      buf = buf.slice(buf.length - MAX_EVENT_BUFFER)
+    let buf = eventBuffer.get(event.sessionId)
+    if (!buf) {
+      // Hook-only sessions are never in `sessions`, so pruneOldSessions can't
+      // reap them — bound the map so it can't grow forever.
+      if (eventBuffer.size >= MAX_BUFFERED_SESSIONS) {
+        const oldest = eventBuffer.keys().next().value
+        if (oldest !== undefined) eventBuffer.delete(oldest)
+      }
+      buf = []
+      eventBuffer.set(event.sessionId, buf)
     }
-    eventBuffer.set(event.sessionId, buf)
+    buf.push(event)
+    if (buf.length > MAX_EVENT_BUFFER) buf.splice(0, buf.length - MAX_EVENT_BUFFER)
   }
 
   broadcast(JSON.stringify({ type: 'agent-event', event }))
@@ -377,7 +396,17 @@ function writeDiscoveryFile(port: number, workspace: string) {
   if (!fs.existsSync(DISCOVERY_DIR)) fs.mkdirSync(DISCOVERY_DIR, { recursive: true })
   const hash = hashWorkspace(workspace)
   discoveryFilePath = path.join(DISCOVERY_DIR, `${hash}-${process.pid}.json`)
-  fs.writeFileSync(discoveryFilePath, JSON.stringify({ port, pid: process.pid, workspace: normalizePath(workspace) }, null, 2) + '\n')
+  const tmp = `${discoveryFilePath}.${process.pid}.tmp`
+  const body = JSON.stringify({ port, pid: process.pid, workspace: normalizePath(workspace) }, null, 2) + '\n'
+  fs.writeFileSync(tmp, body)
+  try {
+    fs.renameSync(tmp, discoveryFilePath)
+  } catch {
+    // Windows can refuse rename-over while a reader holds the target
+    fs.writeFileSync(discoveryFilePath, body)
+  } finally {
+    try { fs.unlinkSync(tmp) } catch { /* already renamed */ }
+  }
 }
 
 function removeDiscoveryFile() {
@@ -536,10 +565,18 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
       sseClients.add(res)
       log(`[sse] Client connected (${sseClients.size} total)`)
 
-      req.on('close', () => {
-        sseClients.delete(res)
-        log(`[sse] Client disconnected (${sseClients.size} total)`)
-      })
+      // Comment-line heartbeat keeps proxies/NAT from idling out the stream
+      // and surfaces dead sockets via write errors.
+      const heartbeat = setInterval(() => {
+        try { res.write(': ping\n\n') } catch { cleanupClient() }
+      }, SSE_HEARTBEAT_MS)
+      const cleanupClient = () => {
+        clearInterval(heartbeat)
+        if (sseClients.delete(res)) log(`[sse] Client disconnected (${sseClients.size} total)`)
+      }
+      req.on('close', cleanupClient)
+      res.on('close', cleanupClient)
+      res.on('error', cleanupClient)
 
       // Send current session list (Claude + Codex)
       const sessionList: SessionInfo[] = []

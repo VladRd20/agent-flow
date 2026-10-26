@@ -32,18 +32,37 @@ export async function startServer(options: ServerOptions) {
   const relay = await createRelay({ workspace, verbose: options.verbose, telemetry })
 
   const server = http.createServer((req, res) => {
-    // SSE endpoint
-    if (req.url === '/events') {
+    const pathname = (req.url || '/').split(/[?#]/, 1)[0]
+    const isRead = req.method === 'GET' || req.method === 'HEAD'
+
+    if (!isRead) {
+      // The server is read-only; there are no write endpoints.
+      res.writeHead(405, { Allow: 'GET, HEAD' })
+      res.end('Method not allowed')
+      return
+    }
+
+    // SSE endpoint (query strings tolerated)
+    if (pathname === '/events') {
       return relay.handleSSE(req, res)
     }
 
     // Static files (UI)
-    if (req.method === 'GET') {
-      return serveStatic(req, res)
-    }
+    return serveStatic(req, res)
+  })
 
-    res.writeHead(404)
-    res.end('Not found')
+  server.on('clientError', (_err, socket) => {
+    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n')
+    else socket.destroy()
+  })
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE' || err.code === 'EACCES' || err.code === 'EADDRNOTAVAIL') {
+      console.error(`Cannot listen on ${host}:${port} (${err.code}): ${err.message}`)
+      relay.dispose()
+      void telemetry.dispose().finally(() => process.exit(1))
+    } else {
+      console.error('Server error:', err)
+    }
   })
 
   server.listen(port, host, () => {

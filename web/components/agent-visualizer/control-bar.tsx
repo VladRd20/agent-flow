@@ -241,6 +241,8 @@ function ReviewControlBar({
       <div className={`glass-card flex items-center gap-3 ${isMobile ? 'px-3 py-2' : 'px-5 py-3'}`}>
         {/* Play/Pause */}
         <button
+          type="button"
+          aria-label={isPlaying ? 'Pause' : 'Play'}
           onClick={onPlayPause}
           className="w-9 h-9 rounded-full flex items-center justify-center transition-all shrink-0 hover:scale-110"
           style={{
@@ -264,6 +266,25 @@ function ReviewControlBar({
           ref={scrubberRef}
           className="flex-1 relative h-8 flex items-center group cursor-pointer"
           style={{ touchAction: 'none' }}
+          role="slider"
+          tabIndex={0}
+          aria-label="Timeline position"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(totalDuration * 1000) / 1000}
+          aria-valuenow={Math.round(currentTime * 1000) / 1000}
+          aria-valuetext={`${formatTime(currentTime)} of ${formatTime(totalDuration)}`}
+          onKeyDown={(e) => {
+            if (!onSeek || e.ctrlKey || e.metaKey || e.altKey) return
+            const step = Math.max(totalDuration / 50, 0.1)
+            let next: number | null = null
+            if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = currentTime + step
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = currentTime - step
+            else if (e.key === 'Home') next = 0
+            else if (e.key === 'End') next = totalDuration
+            if (next === null) return
+            e.preventDefault()
+            onSeek(Math.max(0, Math.min(totalDuration, next)))
+          }}
           onMouseDown={(e) => {
             e.preventDefault()
             setIsScrubbing(true)
@@ -314,6 +335,9 @@ function ReviewControlBar({
           {SPEEDS.map((s) => (
             <button
               key={s}
+              type="button"
+              aria-label={`Speed ${s}x`}
+              aria-pressed={speed === s}
               onClick={() => onSpeedChange(s)}
               className="px-2 py-0.5 rounded text-[10px] font-mono transition-all"
               style={{
@@ -329,6 +353,8 @@ function ReviewControlBar({
         {/* Resume Live */}
         {isReviewing && (
           <button
+            type="button"
+            aria-label="Resume live"
             onClick={onResumeLive}
             className="px-2.5 py-1 rounded text-[10px] font-mono font-semibold transition-all hover:scale-105 shrink-0"
             style={{
@@ -344,6 +370,8 @@ function ReviewControlBar({
         {/* Restart */}
         {isReviewing && (
           <button
+            type="button"
+            aria-label="Restart"
             onClick={onRestart}
             className="text-sm transition-all shrink-0 hover:scale-110"
             style={{ color: COLORS.textDim }}

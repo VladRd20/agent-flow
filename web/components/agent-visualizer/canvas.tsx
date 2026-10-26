@@ -433,7 +433,7 @@ export function AgentCanvas({
         console.warn('[AgentCanvas] draw error:', err)
       }
     }
-  }, [detectStateChanges, updateCamera, updateDragLerp, transformRef])
+  }, [detectStateChanges, updateCamera, updateDragLerp, transformRef, simulationRef])
 
   drawRef.current = draw
 

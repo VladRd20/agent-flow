@@ -27,6 +27,8 @@ import { useAudioEffects } from "@/hooks/use-audio-effects"
 
 export function AgentVisualizer() {
   const bridge = useVSCodeBridge()
+  // Stable callbacks pulled out so hook deps are exact (bridge itself is a new object each render)
+  const { getSessionEventCount, flushSessionEvents, removeSession, selectSession, bridgeOpenFile } = bridge
 
   const {
     frameRef,
@@ -60,6 +62,7 @@ export function AgentVisualizer() {
   })
 
   const selection = useSelectionState({ agents, toolCalls, discoveries })
+  const { clearAllSelections, clearAgent, selectedAgentId: selectedAgentIdSel } = selection
 
   const [showStats, setShowStats] = useState(false)
   const [showHexGrid, setShowHexGrid] = useState(true)
@@ -97,7 +100,7 @@ export function AgentVisualizer() {
       if (prevSelectedRef.current !== null) {
         sessionCacheRef.current.set(prevSelectedRef.current, {
           snapshot: saveSnapshot(),
-          eventCount: bridge.getSessionEventCount(prevSelectedRef.current),
+          eventCount: getSessionEventCount(prevSelectedRef.current),
         })
       }
 
@@ -107,15 +110,15 @@ export function AgentVisualizer() {
       const cached = sessionCacheRef.current.get(bridge.selectedSessionId)
       if (cached) {
         restoreSnapshot(cached.snapshot)
-        bridge.flushSessionEvents(bridge.selectedSessionId, cached.eventCount)
+        flushSessionEvents(bridge.selectedSessionId, cached.eventCount)
       } else {
         restart()
-        bridge.flushSessionEvents(bridge.selectedSessionId)
+        flushSessionEvents(bridge.selectedSessionId)
       }
 
       prevSelectedRef.current = bridge.selectedSessionId
     }
-  }, [bridge.selectedSessionId, restart, bridge.flushSessionEvents, saveSnapshot, restoreSnapshot, bridge.getSessionEventCount])
+  }, [bridge.selectedSessionId, restart, flushSessionEvents, saveSnapshot, restoreSnapshot, getSessionEventCount])
 
   // Timeline events — incremental: only processes new conversation messages
   const timelineCacheRef = useRef<{
@@ -189,13 +192,13 @@ export function AgentVisualizer() {
     toggleStats: () => { setShowStats(prev => !prev) },
     toggleCostOverlay: () => toggleExclusivePanel('cost'),
     zoomToFit: () => { setZoomToFitTrigger(n => n + 1) },
-    clearSelection: () => { selection.clearAllSelections() },
-    deselectAgent: () => { selection.clearAgent() },
+    clearSelection: () => { clearAllSelections() },
+    deselectAgent: () => { clearAgent() },
     closeTranscript: () => { setShowTranscript(false) },
     toggleMute: handleToggleMute,
     setSpeed,
-    selectedAgentId: selection.selectedAgentId,
-  }), [handlePlayPause, selection.clearAllSelections, selection.clearAgent, selection.selectedAgentId, setSpeed, handleToggleMute, toggleExclusivePanel])
+    selectedAgentId: selectedAgentIdSel,
+  }), [handlePlayPause, clearAllSelections, clearAgent, selectedAgentIdSel, setSpeed, handleToggleMute, toggleExclusivePanel])
 
   useKeyboardShortcuts(keyboardActions)
 
@@ -238,12 +241,12 @@ export function AgentVisualizer() {
   ) : []
 
   const handleCloseSession = useCallback((id: string) => {
-    bridge.removeSession(id)
+    removeSession(id)
     sessionCacheRef.current.delete(id)
     if (bridge.selectedSessionId === id) {
       const remaining = bridge.sessions.filter(s => s.id !== id)
       if (remaining.length > 0) {
-        bridge.selectSession(remaining[remaining.length - 1].id)
+        selectSession(remaining[remaining.length - 1].id)
       }
     }
     // Deps list the specific fields/functions actually read above, not the
@@ -251,11 +254,11 @@ export function AgentVisualizer() {
     // every render, so depending on `bridge` itself recreated this callback
     // (and the TopBar prop it's passed to) on every render, defeating
     // TopBar's memo().
-  }, [bridge.removeSession, bridge.selectedSessionId, bridge.sessions, bridge.selectSession])
+  }, [removeSession, bridge.selectedSessionId, bridge.sessions, selectSession])
 
   const openFile = useCallback((filePath: string, line?: number) => {
-    bridge.bridgeOpenFile(filePath, line)
-  }, [bridge.bridgeOpenFile])
+    bridgeOpenFile(filePath, line)
+  }, [bridgeOpenFile])
 
   const isEmpty = agents.size === 0 && !bridge.useMockData
 

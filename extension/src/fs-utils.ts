@@ -8,8 +8,10 @@ export function readFileChunk(filePath: string, offset: number, length: number):
   const fd = fs.openSync(filePath, 'r')
   try {
     const buffer = Buffer.alloc(length)
-    fs.readSync(fd, buffer, 0, length, offset)
-    return buffer.toString('utf-8')
+    // readSync may return fewer bytes than requested (file shrank mid-read);
+    // decoding the zero-filled remainder would inject NUL characters.
+    const bytesRead = fs.readSync(fd, buffer, 0, length, offset)
+    return buffer.toString('utf-8', 0, bytesRead)
   } finally {
     fs.closeSync(fd)
   }

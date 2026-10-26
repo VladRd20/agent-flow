@@ -14,7 +14,10 @@ export function parseArgs(argv: string[]) {
       if (!isNaN(n) && n > 0 && n < 65536) port = n
       i++
     } else if (arg === '--host' && argv[i + 1]) {
-      host = argv[i + 1]
+      // Host is interpolated into a shell command on Windows (openURL), so only
+      // accept plain hostnames / IP literals.
+      if (/^[A-Za-z0-9.:_-]+$/.test(argv[i + 1])) host = argv[i + 1]
+      else console.error(`Ignoring invalid --host value: ${argv[i + 1]}`)
       i++
     } else if (arg === '--no-open') {
       open = false

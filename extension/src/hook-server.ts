@@ -13,6 +13,9 @@ import { createLogger } from './logger'
 
 const log = createLogger('HookServer')
 
+/** Upper bound on per-session hook state entries. */
+const MAX_TRACKED_SESSIONS = 500
+
 /**
  * Lightweight HTTP server that receives Claude Code hook events.
  *
@@ -67,36 +70,53 @@ export class HookServer implements vscode.Disposable {
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
         if (req.method === 'POST') {
-          let body = ''
+          const declared = Number(req.headers['content-length'])
+          if (Number.isFinite(declared) && declared > HOOK_MAX_BODY_SIZE) {
+            log.warn('Request body exceeded size limit (content-length), rejecting')
+            res.writeHead(413, { Connection: 'close' })
+            res.end()
+            req.destroy()
+            return
+          }
+          const chunks: Buffer[] = []
+          let received = 0
           let oversized = false
           req.on('data', (chunk: Buffer) => {
             if (oversized) return
-            body += chunk.toString()
-            if (body.length > HOOK_MAX_BODY_SIZE) {
+            received += chunk.length
+            if (received > HOOK_MAX_BODY_SIZE) {
               oversized = true
-              body = ''
-              log.warn('Request body exceeded size limit, discarding')
+              chunks.length = 0
+              log.warn('Request body exceeded size limit, rejecting')
+              // Stop buffering and drop the connection instead of draining an unbounded stream.
+              res.writeHead(413, { Connection: 'close' })
+              res.end()
+              req.destroy()
+              return
             }
+            chunks.push(chunk)
           })
+          req.on('error', () => { /* client aborted — nothing to clean up */ })
           req.on('end', () => {
-            if (!oversized) {
-              try {
-                const parsed: unknown = JSON.parse(body)
-                if (!parsed || typeof parsed !== 'object' || !('session_id' in parsed) || !('hook_event_name' in parsed)
-                    || typeof (parsed as HookPayload).session_id !== 'string'
-                    || typeof (parsed as HookPayload).hook_event_name !== 'string') {
-                  log.warn('Invalid hook payload: missing session_id or hook_event_name')
-                } else {
-                  this.handleHook(parsed as HookPayload)
-                }
-              } catch (e) {
-                log.error('Failed to parse payload:', e)
+            if (oversized) return
+            let status = 200
+            try {
+              const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf-8'))
+              if (!parsed || typeof parsed !== 'object' || !('session_id' in parsed) || !('hook_event_name' in parsed)
+                  || typeof (parsed as HookPayload).session_id !== 'string'
+                  || typeof (parsed as HookPayload).hook_event_name !== 'string') {
+                log.warn('Invalid hook payload: missing session_id or hook_event_name')
+                status = 400
+              } else {
+                this.handleHook(parsed as HookPayload)
               }
+            } catch (e) {
+              log.error('Failed to parse/handle payload:', e)
+              status = 400
             }
-            // Always return 200 with empty body — we're observing, not blocking.
-            // Empty body = "success, no output" per Claude Code docs.
+            // Empty body on success = "success, no output" per Claude Code docs.
             // Returning JSON (even '{}') triggers schema parsing which can cause issues.
-            res.writeHead(200)
+            res.writeHead(status)
             res.end()
           })
         } else {
@@ -104,6 +124,10 @@ export class HookServer implements vscode.Disposable {
           res.end('Agent Visualizer Hook Server')
         }
       })
+
+      // Hook payloads are tiny and local; don't let stalled clients hold sockets for the 5 min default.
+      this.server.requestTimeout = 15_000
+      this.server.headersTimeout = 10_000
 
       this.server.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'EADDRINUSE') {
@@ -134,6 +158,11 @@ export class HookServer implements vscode.Disposable {
   private getOrCreateSession(sessionId: string): { startTime: number; agentNames: Map<string, string> } {
     let state = this.sessionState.get(sessionId)
     if (!state) {
+      // Sessions that never send SessionEnd (killed CLI) would otherwise accumulate forever.
+      if (this.sessionState.size >= MAX_TRACKED_SESSIONS) {
+        const oldest = this.sessionState.keys().next().value
+        if (oldest !== undefined) this.sessionState.delete(oldest)
+      }
       state = { startTime: Date.now(), agentNames: new Map() }
       this.sessionState.set(sessionId, state)
     }
@@ -274,6 +303,7 @@ export class HookServer implements vscode.Disposable {
     const sessionAgents = this.getOrCreateSession(payload.session_id).agentNames
     const childName = agentId ? `${subagentPersona}-${agentId.slice(-SUBAGENT_ID_SUFFIX_LENGTH)}` : generateSubagentFallbackName(String(Date.now()), sessionAgents.size + 1)
 
+    if (sessionAgents.size >= 1000) sessionAgents.delete(sessionAgents.keys().next().value as string)
     sessionAgents.set(agentId, childName)
   }
 
@@ -286,7 +316,7 @@ export class HookServer implements vscode.Disposable {
     this.emit({
       time: this.elapsedSeconds(payload.session_id),
       type: 'subagent_return',
-      payload: { child: childName, parent: parentName, summary: `${payload.agent_type} complete` },
+      payload: { child: childName, parent: parentName, summary: `${payload.agent_type || 'subagent'} complete` },
     }, payload.session_id)
 
     this.emit({

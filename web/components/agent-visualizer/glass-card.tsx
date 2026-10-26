@@ -17,7 +17,8 @@ export function GlassCard({ children, className = '', style, visible }: GlassCar
   useEffect(() => {
     if (visible) {
       setMounted(true)
-      requestAnimationFrame(() => setAnimating(true))
+      const raf = requestAnimationFrame(() => setAnimating(true))
+      return () => cancelAnimationFrame(raf)
     } else {
       setAnimating(false)
       const timer = setTimeout(() => setMounted(false), TIMING.glassAnimMs)

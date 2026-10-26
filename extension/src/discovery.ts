@@ -73,7 +73,7 @@ export function writeDiscoveryFile(port: number, workspace: string): void {
   ensureDir()
   const hash = hashWorkspace(workspace)
   const filePath = path.join(DISCOVERY_DIR, `${hash}-${process.pid}.json`)
-  fs.writeFileSync(filePath, JSON.stringify({
+  writeFileAtomic(filePath, JSON.stringify({
     port,
     pid: process.pid,
     workspace: normalizePath(workspace),
@@ -101,7 +101,7 @@ export function addWorkspaceToManifest(workspace: string): void {
   const workspaces = readManifest()
   if (workspaces.includes(resolved)) { return }
   workspaces.push(resolved)
-  fs.writeFileSync(WORKSPACES_MANIFEST_PATH, JSON.stringify(workspaces, null, 2) + '\n')
+  writeFileAtomic(WORKSPACES_MANIFEST_PATH, JSON.stringify(workspaces, null, 2) + '\n')
 }
 
 function readManifest(): string[] {
@@ -134,6 +134,22 @@ export function ensureHookScript(): void {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Write via temp file + rename so concurrent readers (hook.js) never see a partial file. */
+export function writeFileAtomic(filePath: string, content: string): void {
+  const tmpPath = `${filePath}.${process.pid}.tmp`
+  try {
+    fs.writeFileSync(tmpPath, content)
+    try {
+      fs.renameSync(tmpPath, filePath)
+    } catch {
+      // Windows can refuse rename-over (EPERM/EBUSY) while AV or a reader holds the target
+      fs.writeFileSync(filePath, content)
+    }
+  } finally {
+    try { fs.unlinkSync(tmpPath) } catch { /* already renamed or nothing to clean */ }
+  }
+}
 
 function ensureDir(): void {
   if (!fs.existsSync(DISCOVERY_DIR)) {

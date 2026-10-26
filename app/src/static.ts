@@ -29,17 +29,36 @@ const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
 }
 
+/** Strip query/fragment and percent-decode; returns null for malformed or NUL-containing paths. */
+export function resolveRequestPath(rawUrl: string): string | null {
+  const pathname = rawUrl.split(/[?#]/, 1)[0] || '/'
+  try {
+    const decoded = decodeURIComponent(pathname)
+    return decoded.includes('\0') ? null : decoded
+  } catch {
+    return null
+  }
+}
+
+const COMMON_HEADERS = { 'X-Content-Type-Options': 'nosniff' }
+
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
-  const url = req.url || '/'
+  const url = resolveRequestPath(req.url || '/')
+  if (url === null) {
+    res.writeHead(400, COMMON_HEADERS)
+    res.end('Bad request')
+    return
+  }
 
   if (url === '/' || url === '/index.html') {
-    res.writeHead(200, { 'Content-Type': 'text/html' })
+    res.writeHead(200, { ...COMMON_HEADERS, 'Content-Type': 'text/html; charset=utf-8' })
     res.end(HTML_SHELL)
     return
   }
 
-  // Only serve known asset files from the webview directory
-  const basename = path.basename(url)
+  // Only serve known asset files from the webview directory. Backslash is a
+  // separator on Windows but not for posix basename, so normalise it first.
+  const basename = path.basename(url.replace(/\\/g, '/'))
   const ext = path.extname(basename)
   const mime = MIME_TYPES[ext]
 
@@ -51,8 +70,8 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
 
   const filePath = path.join(WEBVIEW_DIR, basename)
 
-  // Prevent path traversal
-  if (!filePath.startsWith(WEBVIEW_DIR)) {
+  // Prevent path traversal (belt and braces: basename already strips directories)
+  if (!filePath.startsWith(WEBVIEW_DIR + path.sep)) {
     res.writeHead(403)
     res.end('Forbidden')
     return
@@ -60,7 +79,7 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
 
   try {
     const content = fs.readFileSync(filePath)
-    res.writeHead(200, { 'Content-Type': mime })
+    res.writeHead(200, { ...COMMON_HEADERS, 'Content-Type': mime })
     res.end(content)
   } catch {
     res.writeHead(404)
