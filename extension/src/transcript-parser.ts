@@ -493,6 +493,15 @@ export class TranscriptParser {
   }
 
   private emitSubagentFinished(childName: string, parent: string, summary: string, sessionId?: string): void {
+    // Mark the child's tailed transcript as completed so that, if it is written
+    // again later (resumed via SendMessage), the subagent watcher re-emits
+    // agent_spawn and the hidden node comes back.
+    const session = sessionId ? this.delegate.getSession(sessionId) : undefined
+    if (session) {
+      for (const watcher of session.subagentWatchers.values()) {
+        if (watcher.agentName === childName && watcher.spawnEmitted) watcher.completed = true
+      }
+    }
     this.delegate.emit({
       time: this.delegate.elapsed(sessionId),
       type: 'subagent_return',

@@ -5,6 +5,7 @@ import {
   BUBBLE_VISIBLE_S, MOCK_END_BUFFER_S,
   ANIM_SPEED,
 } from '@/lib/canvas-constants'
+import { purgeExpiredHidden } from './hidden-agents'
 
 export interface AnimateOptions {
   useMockData: boolean
@@ -105,12 +106,19 @@ function cleanupFaded(
   edges: SimulationState['edges'],
   originalAgents: SimulationState['agents'],
   originalToolCalls: SimulationState['toolCalls'],
-): { agents: SimulationState['agents']; toolCalls: SimulationState['toolCalls']; edges: SimulationState['edges'] } {
+  hiddenAgents: SimulationState['hiddenAgents'],
+  now: number,
+): {
+  agents: SimulationState['agents']; toolCalls: SimulationState['toolCalls']; edges: SimulationState['edges']
+  hiddenAgents: SimulationState['hiddenAgents']
+} {
   let newAgents = agents
   let newToolCalls = toolCalls
   let filteredEdges = edges
+  let newHidden = purgeExpiredHidden(hiddenAgents, now)
 
-  // Cleanup faded agents (completed sub-agents) and their edges
+  // Completed sub-agents that finished fading out leave the graph but are kept
+  // hidden (see hidden-agents.ts) so a resume restores them; they expire later.
   const fadedAgentIds: string[] = []
   for (const [id, agent] of newAgents) {
     if (!agent.isMain && agent.state === 'complete' && agent.opacity <= 0) {
@@ -119,8 +127,12 @@ function cleanupFaded(
   }
   if (fadedAgentIds.length > 0) {
     if (newAgents === originalAgents) newAgents = new Map(originalAgents)
+    if (newHidden === hiddenAgents) newHidden = new Map(hiddenAgents)
     const fadedSet = new Set(fadedAgentIds)
-    for (const id of fadedAgentIds) newAgents.delete(id)
+    for (const id of fadedAgentIds) {
+      newHidden.set(id, { agent: newAgents.get(id)!, hiddenAt: now })
+      newAgents.delete(id)
+    }
     filteredEdges = filteredEdges.filter(e => !fadedSet.has(e.from) && !fadedSet.has(e.to))
   }
 
@@ -140,7 +152,7 @@ function cleanupFaded(
   const isOrphan = (e: SimulationState['edges'][number]) =>
     !newAgents.has(e.from) || !(newAgents.has(e.to) || newToolCalls.has(e.to))
   if (filteredEdges.some(isOrphan)) filteredEdges = filteredEdges.filter(e => !isOrphan(e))
-  return { agents: newAgents, toolCalls: newToolCalls, edges: filteredEdges }
+  return { agents: newAgents, toolCalls: newToolCalls, edges: filteredEdges, hiddenAgents: newHidden }
 }
 
 function animateDiscoveries(discoveries: SimulationState['discoveries'], deltaTime: number, newTime: number): SimulationState['discoveries'] {
@@ -194,8 +206,9 @@ export function computeNextFrame(prev: SimulationState, deltaTime: number, newTi
       const newEdgesRaw = animateEdges(currentState.edges, deltaTime)
       const newToolCallsRaw = animateToolCalls(currentState.toolCalls, deltaTime, newTime)
 
-      const { agents: newAgents, toolCalls: newToolCalls, edges: filteredEdges } =
-        cleanupFaded(newAgentsRaw, newToolCallsRaw, newEdgesRaw, currentState.agents, currentState.toolCalls)
+      const { agents: newAgents, toolCalls: newToolCalls, edges: filteredEdges, hiddenAgents } =
+        cleanupFaded(newAgentsRaw, newToolCallsRaw, newEdgesRaw, currentState.agents, currentState.toolCalls,
+          currentState.hiddenAgents, newTime)
 
       const newDiscoveries = animateDiscoveries(currentState.discoveries, deltaTime, newTime)
       const newParticles = animateParticles(currentState.particles, deltaTime, currentState.speed)
@@ -204,7 +217,7 @@ export function computeNextFrame(prev: SimulationState, deltaTime: number, newTi
       if (options.useMockData && currentState.eventIndex >= options.mockScenarioLength && newTime > options.mockScenarioEndTime + MOCK_END_BUFFER_S) {
         return {
           ...currentState, currentTime: newTime, eventIndex: currentState.eventIndex,
-          agents: newAgents, toolCalls: newToolCalls,
+          agents: newAgents, toolCalls: newToolCalls, hiddenAgents,
           particles: newParticles, edges: filteredEdges,
           discoveries: newDiscoveries,
           maxTimeReached: maxT,
@@ -214,7 +227,7 @@ export function computeNextFrame(prev: SimulationState, deltaTime: number, newTi
 
       return {
         ...currentState, currentTime: newTime, eventIndex: currentState.eventIndex,
-        agents: newAgents, toolCalls: newToolCalls,
+        agents: newAgents, toolCalls: newToolCalls, hiddenAgents,
         particles: newParticles, edges: filteredEdges,
         discoveries: newDiscoveries,
         maxTimeReached: maxT,

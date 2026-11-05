@@ -19,6 +19,8 @@ export interface SimulationState {
   fileAttention: Map<string, FileAttention>
   timelineEntries: Map<string, TimelineEntry>
   conversations: Map<string, ConversationMessage[]>
+  /** Finished sub-agents kept out of the graph until resumed or expired (see hidden-agents.ts) */
+  hiddenAgents: Map<string, { agent: Agent; hiddenAt: number }>
   currentTime: number
   isPlaying: boolean
   speed: number
@@ -39,6 +41,7 @@ export function createEmptyState(overrides?: Partial<SimulationState>): Simulati
     fileAttention: new Map(),
     timelineEntries: new Map(),
     conversations: new Map(),
+    hiddenAgents: new Map(),
     currentTime: 0,
     isPlaying: false,
     speed: 1,

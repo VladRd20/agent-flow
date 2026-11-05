@@ -11,6 +11,7 @@ import { handleAgentSpawn, handleAgentComplete, handleAgentIdle, handlePermissio
 import { handleToolCallStart, handleToolCallEnd } from './handle-tool-events'
 import { handleMessage, handleContextUpdate } from './handle-message-events'
 import { handleSubagentDispatch, handleSubagentReturn } from './handle-subagent-events'
+import { reviveHiddenAgent } from './hidden-agents'
 
 export interface ProcessEventContext {
   syncForceSimulation: (agents: Map<string, Agent>, edges: Edge[]) => void
@@ -30,6 +31,7 @@ export interface MutableEventState {
   fileAttention: SimulationState['fileAttention']
   timelineEntries: SimulationState['timelineEntries']
   conversations: Map<string, ConversationMessage[]>
+  hiddenAgents: SimulationState['hiddenAgents']
   /** When set (historical batch folds), visuals (tool cards, particles, bubbles)
    *  for events with time < visualCutoff are skipped — they would already have
    *  faded out by the end of the batch. Non-visual state is still updated. */
@@ -67,6 +69,19 @@ function mapsEqual<K, V>(a: Map<K, V>, b: Map<K, V>): boolean {
 
 /** Apply one event to already-copied mutable collections. */
 export function applyEvent(event: SimulationEvent, currentTime: number, state: MutableEventState, ctx: ProcessEventContext): void {
+  // A new tool call is unambiguous activity: a finished sub-agent making one has
+  // been resumed (some resume paths never re-send agent_spawn). Bring it back.
+  if (event.type === 'tool_call_start') {
+    const name = typeof event.payload.agent === 'string' ? event.payload.agent : ''
+    const agent = state.agents.get(name)
+    if (agent) {
+      if (agent.state === 'complete' && !agent.isMain) {
+        state.agents.set(name, { ...agent, state: 'idle', completeTime: undefined })
+      }
+    } else if (name) {
+      reviveHiddenAgent(state, name, currentTime, ctx)
+    }
+  }
   switch (event.type) {
     case 'agent_spawn':       handleAgentSpawn(event.payload, currentTime, state, ctx); break
     case 'agent_complete':    handleAgentComplete(event.payload, currentTime, state, ctx); break
@@ -92,6 +107,7 @@ function copyCollections(prev: SimulationState): MutableEventState {
     fileAttention: new Map(prev.fileAttention),
     timelineEntries: new Map(prev.timelineEntries),
     conversations: new Map(prev.conversations),
+    hiddenAgents: new Map(prev.hiddenAgents),
   }
 }
 
@@ -106,6 +122,7 @@ function withCollections(prev: SimulationState, state: MutableEventState): Simul
     fileAttention: mapsEqual(prev.fileAttention, state.fileAttention) ? prev.fileAttention : state.fileAttention,
     timelineEntries: mapsEqual(prev.timelineEntries, state.timelineEntries) ? prev.timelineEntries : state.timelineEntries,
     conversations: mapsEqual(prev.conversations, state.conversations) ? prev.conversations : state.conversations,
+    hiddenAgents: mapsEqual(prev.hiddenAgents, state.hiddenAgents) ? prev.hiddenAgents : state.hiddenAgents,
   }
 }
 

@@ -40,6 +40,7 @@ function makeState(agentName: string): MutableEventState {
   return {
     agents,
     toolCalls: new Map(),
+    hiddenAgents: new Map(),
     particles: [],
     edges: [],
     discoveries: [],

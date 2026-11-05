@@ -8,6 +8,7 @@ import { AGENT_SPAWN_DISTANCE } from '@/lib/canvas-constants'
 import { withTimelineModel } from '@/lib/timeline-models'
 import { pushTimelineBlock, type ProcessEventContext, type MutableEventState } from './process-event'
 import { edgeId, asString, asBoolean } from './types'
+import { reviveHiddenAgent } from './hidden-agents'
 
 export function handleAgentSpawn(
   payload: Record<string, unknown>,
@@ -43,6 +44,16 @@ export function handleAgentSpawn(
       ...(model ? { model, tokensMax: ctx.getContextWindowSize(model) } : {}),
       ...(runtime ? { runtime } : {}),
     })
+    if (model) recordTimelineModel(state, name, model)
+    return
+  }
+
+  // Finished earlier and hidden (not yet expired): resume it in place, with its stats.
+  if (reviveHiddenAgent(state, name, currentTime, ctx, {
+    ...(task ? { task } : {}),
+    ...(model ? { model, tokensMax: ctx.getContextWindowSize(model) } : {}),
+    ...(runtime ? { runtime } : {}),
+  })) {
     if (model) recordTimelineModel(state, name, model)
     return
   }

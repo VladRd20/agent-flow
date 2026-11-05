@@ -1,14 +1,21 @@
 import type { SimulationState } from './types'
+import { purgeExpiredHidden, HIDDEN_AGENT_TTL_S } from './hidden-agents'
 import { TOOL_MIN_DISPLAY_S, TOOL_MAX_RUNNING_S, DISCOVERY_HOLD_S, BUBBLE_VISIBLE_S, MIN_VISIBLE_OPACITY } from '@/lib/canvas-constants'
 
 /** Snap visual properties to their analytically correct values at a given time (used during seek) */
 export function snapVisualState(state: SimulationState, targetTime: number): SimulationState {
 
   const newAgents = new Map(state.agents)
+  const hiddenAgents = purgeExpiredHidden(new Map(state.hiddenAgents), targetTime)
   for (const [id, agent] of newAgents) {
     if (agent.state === 'complete' && !agent.isMain) {
-      // Remove completed sub-agents entirely during seek
+      // Completed sub-agents leave the graph during seek; they stay hidden (so a
+      // later resume can restore them) unless they finished more than the TTL ago.
       newAgents.delete(id)
+      const hiddenAt = agent.completeTime ?? targetTime
+      if (targetTime - hiddenAt < HIDDEN_AGENT_TTL_S) {
+        hiddenAgents.set(id, { agent: { ...agent, opacity: 0, scale: 0.8 }, hiddenAt })
+      }
       continue
     }
     const snapped = { ...agent }
@@ -56,7 +63,7 @@ export function snapVisualState(state: SimulationState, targetTime: number): Sim
 
   return {
     ...state,
-    agents: newAgents, toolCalls: newToolCalls,
+    agents: newAgents, toolCalls: newToolCalls, hiddenAgents,
     edges: newEdges, particles: [], discoveries: newDiscoveries,
   }
 }
