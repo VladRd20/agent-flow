@@ -13,8 +13,12 @@ export function clampPopupPosition(
   popupHeight: number,
   offsetY = 20,
 ): { left: number; top: number } {
-  const maxX = typeof window !== 'undefined' ? window.innerWidth - popupWidth - CARD.margin : SSR_VIEWPORT_W
-  const maxY = typeof window !== 'undefined' ? window.innerHeight - popupHeight - CARD.margin : SSR_VIEWPORT_H
+  // visualViewport excludes the on-screen keyboard / browser chrome on iOS Safari
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null
+  const vw = vv?.width ?? (typeof window !== 'undefined' ? window.innerWidth : SSR_VIEWPORT_W)
+  const vh = vv?.height ?? (typeof window !== 'undefined' ? window.innerHeight : SSR_VIEWPORT_H)
+  const maxX = vw - popupWidth - CARD.margin
+  const maxY = vh - popupHeight - CARD.margin
 
   return {
     left: Math.min(Math.max(CARD.margin, position.x - popupWidth / 2), maxX),

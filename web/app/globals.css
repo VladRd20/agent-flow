@@ -203,22 +203,144 @@
   display: none;
 }
 
-/*
- * Mobile-only additions (max-width: 768px). These never apply above the
- * breakpoint, so desktop styling above is completely unaffected.
- */
-@media (max-width: 768px) {
-  /* Prevent the browser's pull-to-refresh / rubber-band scroll from
-     fighting with single-finger canvas panning and panel drag gestures. */
-  html, body {
-    overscroll-behavior: none;
-  }
+/* ─── Layout variables ───────────────────────────────────────────────────────
+ * Single source of truth for chrome offsets. Safe-area insets keep UI clear of
+ * the iPhone notch / home indicator / landscape side cut-outs.
+ * --af-bottom-bar-h is measured and written at runtime by the control bar. */
+:root {
+  --af-sat: env(safe-area-inset-top, 0px);
+  --af-sab: env(safe-area-inset-bottom, 0px);
+  --af-sal: env(safe-area-inset-left, 0px);
+  --af-sar: env(safe-area-inset-right, 0px);
+  --af-gap: 12px;
+  --af-top: max(var(--af-gap), var(--af-sat));
+  --af-left: max(var(--af-gap), var(--af-sal));
+  --af-right: max(var(--af-gap), var(--af-sar));
+  --af-bottom: max(16px, var(--af-sab));
+  --af-edge-left: max(16px, var(--af-sal));
+  --af-edge-right: max(16px, var(--af-sar));
+  --af-top-bar-h: 36px;
+  --af-bottom-bar-h: 56px;
+  --af-detail-h: 0px;
+  /* Where panels that sit under the top bar start */
+  --af-feed-top: calc(var(--af-top) + var(--af-top-bar-h));
+  --af-sheet-top: var(--af-feed-top);
+  /* Bottom edge of the control bar; floating panels sit above this */
+  --af-above-bar: calc(var(--af-bottom) + var(--af-bottom-bar-h));
+  --af-min-font: 12px;
+}
 
-  /* Larger tap targets and momentum scrolling for touch-scrolled panels. */
+/* Never let the page itself scroll or rubber-band; the app is a fixed canvas. */
+html, body {
+  overscroll-behavior: none;
+}
+body {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Root app container: dynamic viewport units track iOS Safari's collapsing toolbars
+   (100vh fallback for browsers without dvh). */
+.af-root {
+  width: 100vw;
+  height: 100vh;
+  width: 100dvw;
+  height: 100dvh;
+}
+
+/* Transcript / message bodies stay selectable and copyable. */
+.af-selectable,
+.af-selectable * {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Sheets: keep content clear of notch / home indicator / landscape cut-outs. */
+.af-sheet {
+  padding-left: max(12px, var(--af-sal));
+  padding-right: max(12px, var(--af-sar));
+  padding-bottom: max(12px, var(--af-sab));
+}
+
+/* Edge fade for horizontally scrolling strips that overflow. */
+.af-fade-end {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+}
+.af-fade-start {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px);
+  mask-image: linear-gradient(90deg, transparent, #000 28px);
+}
+.af-fade-both {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
+/* Touch: extend hit areas to 44x44 without changing the visual size. */
+@media (pointer: coarse) {
+  .af-hit {
+    position: relative;
+  }
+  .af-hit::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
   .glass-card {
-    -webkit-overflow-scrolling: touch;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
 }
+
+/*
+ * Mobile-only additions. Mirrors useIsMobile(): narrow viewport, or a coarse
+ * pointer in a short (landscape phone) viewport. Desktop is unaffected.
+ */
+@media (max-width: 768px), (pointer: coarse) and (max-height: 500px) {
+  :root {
+    --af-gap: 8px;
+    --af-bottom: max(12px, var(--af-sab));
+    --af-top-bar-h: 44px;
+    --af-feed-top: calc(var(--af-top) + var(--af-top-bar-h) + 4px);
+    --af-sheet-top: calc(var(--af-top) + var(--af-top-bar-h) + 8px);
+  }
+
+  .glass-card {
+    -webkit-overflow-scrolling: touch;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* Font floor: desktop density stays, phones never go below 12px. */
+  .text-\[8px\],
+  .text-\[9px\],
+  .text-\[10px\],
+  .text-\[11px\] {
+    font-size: var(--af-min-font);
+  }
+
+  /* iOS Safari zooms the page when focusing an input below 16px. */
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
 /* Keyboard focus ring for custom controls (the app styles buttons inline and
    resets outlines; keyboard users need a visible indicator). */
 button:focus-visible,

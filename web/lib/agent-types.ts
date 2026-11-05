@@ -209,6 +209,12 @@ export const Z = {
   controlBar: 50,
   chatPanel: 50,
   transcriptPanel: 60,
+  /** Mobile backdrop behind sheets (above control bar, below sheets) */
+  sheetBackdrop: 65,
+  /** Mobile bottom/full sheets (above control bar) */
+  sheet: 70,
+  /** Top bar sits above sheets so the hamburger/tabs stay reachable */
+  topBar: 90,
   detailCard: 100,
   contextMenu: 200,
 } as const

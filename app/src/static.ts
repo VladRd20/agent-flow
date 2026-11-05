@@ -12,10 +12,15 @@ const HTML_SHELL = `<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0a0a1a">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Agent Flow</title>
   <link rel="stylesheet" href="/index.css">
-  <style>html, body { height: 100%; margin: 0; padding: 0; }</style>
+  <style>html, body { height: 100%; margin: 0; padding: 0; background: #0a0a1a; } body { position: fixed; inset: 0; overflow: hidden; }</style>
 </head>
 <body class="font-sans antialiased" style="background: #0a0a1a;">
   <div id="root" style="height: 100%;"></div>
