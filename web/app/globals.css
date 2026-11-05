@@ -269,6 +269,8 @@ input, textarea {
 
 /* Sheets: keep content clear of notch / home indicator / landscape cut-outs. */
 .af-sheet {
+  /* Sheets sit over a live, busy canvas: near-opaque so text never mixes with graph labels behind */
+  background: rgba(8, 12, 24, 0.94);
   padding-left: max(12px, var(--af-sal));
   padding-right: max(12px, var(--af-sar));
   padding-bottom: max(12px, var(--af-sab));

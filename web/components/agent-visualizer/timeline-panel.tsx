@@ -4,6 +4,7 @@ import { memo, useRef, useEffect, useMemo, useCallback } from 'react'
 import { TimelineEntry, Z } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { formatTimelineModels } from '@/lib/timeline-models'
+import { pickMarkerInterval, formatMarker } from '@/lib/timeline-markers'
 import { PanelHeader, SlidingPanel } from './shared-ui'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 
@@ -16,11 +17,20 @@ interface TimelinePanelProps {
 
 // ─── Layout constants ────────────────────────────────────────────────────────
 
-const ROW_HEIGHT = 22
-const HEADER_HEIGHT = 20
-const LABEL_WIDTH = 90
-const FONT = '9px monospace'
-const MODEL_FONT = '8px monospace'
+interface TimelineMetrics {
+  row: number
+  header: number
+  label: number
+  font: string
+  modelFont: string
+  /** Minimum screen px between time-axis labels. */
+  markerGap: number
+}
+
+const DESKTOP_METRICS: TimelineMetrics = { row: 22, header: 20, label: 90, font: '9px monospace', modelFont: '8px monospace', markerGap: 40 }
+// Phones: larger type (canvas text is exempt from the CSS font floor), taller rows to fit it
+const MOBILE_METRICS: TimelineMetrics = { row: 28, header: 22, label: 96, font: '11px monospace', modelFont: '9.5px monospace', markerGap: 48 }
+
 
 // ─── Legend (static DOM — no perf cost) ─────────────────────────────────────
 
@@ -55,7 +65,10 @@ function drawTimeline(
   width: number,
   height: number,
   dpr: number,
+  m: TimelineMetrics,
 ) {
+  const ROW_HEIGHT = m.row, HEADER_HEIGHT = m.header, LABEL_WIDTH = m.label
+  const FONT = m.font, MODEL_FONT = m.modelFont
   ctx.clearRect(0, 0, width * dpr, height * dpr)
   ctx.save()
   ctx.scale(dpr, dpr)
@@ -81,7 +94,7 @@ function drawTimeline(
   const barWidth = width - LABEL_WIDTH
 
   // Time markers
-  const markerInterval = timeSpan > 60 ? 10 : timeSpan > 20 ? 5 : timeSpan > 10 ? 2 : 1
+  const markerInterval = pickMarkerInterval(timeSpan, barWidth, m.markerGap)
   const markers: number[] = []
   for (let t = Math.ceil(minTime / markerInterval) * markerInterval; t <= maxTime; t += markerInterval) {
     markers.push(t)
@@ -94,7 +107,7 @@ function drawTimeline(
   ctx.fillStyle = COLORS.textMuted
   for (const t of markers) {
     const x = LABEL_WIDTH + ((t - minTime) / timeSpan) * barWidth
-    ctx.fillText(`${t.toFixed(0)}s`, x, HEADER_HEIGHT - 4)
+    ctx.fillText(formatMarker(t), x, HEADER_HEIGHT - 5)
   }
 
   // ── Agent rows ──
@@ -105,16 +118,21 @@ function drawTimeline(
     // Agent label, with its models underneath when known
     ctx.textAlign = 'right'
     ctx.fillStyle = COLORS.textDim
-    const name = entry.agentName.length > 12 ? entry.agentName.slice(0, 12) + '..' : entry.agentName
+    const name = fitText(ctx, entry.agentName, LABEL_WIDTH - 8)
     const models = formatTimelineModels(entry.models)
     if (models) {
+      ctx.textBaseline = 'alphabetic'
       ctx.fillText(name, LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 - 1)
       ctx.font = MODEL_FONT
       ctx.fillStyle = COLORS.textMuted
-      ctx.fillText(fitText(ctx, models, LABEL_WIDTH - 8), LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 + 8)
+      ctx.textBaseline = 'top'
+      ctx.fillText(fitText(ctx, models, LABEL_WIDTH - 8), LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 + 1)
+      ctx.textBaseline = 'alphabetic'
       ctx.font = FONT
     } else {
-      ctx.fillText(name, LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 + 3)
+      ctx.textBaseline = 'middle'
+      ctx.fillText(name, LABEL_WIDTH - 6, y + ROW_HEIGHT / 2)
+      ctx.textBaseline = 'alphabetic'
     }
 
     // Background track
@@ -160,7 +178,8 @@ function drawTimeline(
         ctx.fillStyle = block.color
         ctx.globalAlpha = 0.8
         ctx.textAlign = 'left'
-        ctx.fillText(block.label, x + 4, trackY + trackH / 2 + 3)
+        ctx.textBaseline = 'middle'
+        ctx.fillText(block.label, x + 4, trackY + trackH / 2)
         ctx.restore()
       }
     }
@@ -181,6 +200,8 @@ function drawTimeline(
 function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const isMobile = useIsMobile()
+  const metrics = isMobile ? MOBILE_METRICS : DESKTOP_METRICS
+  const { row: ROW_HEIGHT, header: HEADER_HEIGHT, label: LABEL_WIDTH } = metrics
 
   const sortedEntries = useMemo(() => {
     if (!visible) return []
@@ -195,7 +216,7 @@ function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: T
     const entry = row >= 0 ? sortedEntries[row] : undefined
     const title = entry ? rowTooltip(entry) : ''
     if (e.currentTarget.title !== title) e.currentTarget.title = title
-  }, [sortedEntries])
+  }, [sortedEntries, ROW_HEIGHT, HEADER_HEIGHT])
 
   useEffect(() => {
     if (!visible) return
@@ -213,9 +234,9 @@ function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: T
     canvas.style.width = `${width}px`
     canvas.style.height = `${canvasHeight}px`
 
-    drawTimeline(ctx, sortedEntries, currentTime, width, canvasHeight, dpr)
+    drawTimeline(ctx, sortedEntries, currentTime, width, canvasHeight, dpr, metrics)
     // redraw on every prop change (component only re-renders on data/time updates)
-  }, [visible, sortedEntries, currentTime, canvasHeight])
+  }, [visible, sortedEntries, currentTime, canvasHeight, metrics])
 
   if (!visible) return null
 
@@ -248,10 +269,11 @@ function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: T
 
         {/* Legend (static DOM) */}
         <div className="flex items-center gap-3 px-3 py-1.5" style={{ borderTop: `1px solid ${COLORS.holoBorder06}` }}>
-          <div style={{ width: LABEL_WIDTH, flexShrink: 0 }} />
-          <div className="flex items-center gap-3">
+          {/* Desktop aligns the legend with the bar column; phones need the full width */}
+          {!isMobile && <div style={{ width: LABEL_WIDTH, flexShrink: 0 }} />}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             {LEGEND_ITEMS.map(item => (
-              <div key={item.label} className="flex items-center gap-1">
+              <div key={item.label} className="flex items-center gap-1 whitespace-nowrap">
                 <div className="w-2 h-2 rounded-sm" style={{ background: item.color + '70' }} />
                 <span className="text-[9px] font-mono" style={{ color: COLORS.textMuted }}>{item.label}</span>
               </div>
