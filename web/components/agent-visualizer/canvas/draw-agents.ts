@@ -8,7 +8,7 @@ import { drawHexagon, glowStroke, snapToDevice, CLAUDE_SPARK_D, OPENAI_LOGO_D, O
 import { getAgentGlowSprite, getGlowSprite } from './render-cache'
 import { getNodeSizeMultiplier } from './node-size'
 import { layoutContextRing } from './context-meter'
-import { getOverlayFrame, type LabelPlan, type OverlayFrame } from './overlay-layout'
+import { getOverlayFrame, MODEL_LINE_GAP, type LabelPlan, type OverlayFrame } from './overlay-layout'
 import type { EaseContext } from './eased-value-map'
 
 let _claudeSparkPath: Path2D | null = null
@@ -322,10 +322,22 @@ function drawLabelStack(
   ctx.fillStyle = emphasized ? COLORS.textPrimary : COLORS.textDim
   ctx.fillText(plan.name, cx, snapToDevice(nameTop, dpr))
 
+  // Model line, tinted with the node's model-family color
+  const nameH = Math.ceil(frame.labelPx * 1.25)
+  let below = nameTop + nameH
+  if (plan.modelText) {
+    const modelTop = below + MODEL_LINE_GAP
+    ctx.font = frame.captionFont
+    ctx.fillStyle = plan.modelColor
+    ctx.globalAlpha = alpha * plan.alpha * (emphasized ? 1 : 0.8)
+    ctx.fillText(plan.modelText, cx, snapToDevice(modelTop, dpr))
+    ctx.globalAlpha = alpha * plan.alpha
+    below = modelTop + Math.ceil(frame.captionPx * 1.25)
+  }
+
   if (plan.bar && plan.tokenText) {
-    const nameH = Math.ceil(frame.labelPx * 1.25)
     const barX = snapToDevice(x + (w - columnW) / 2, dpr)
-    const barY = snapToDevice(nameTop + nameH + LABEL_STACK.innerGap, dpr)
+    const barY = snapToDevice(below + LABEL_STACK.innerGap, dpr)
     const barH = LABEL_STACK.barHeight
     const bar = plan.bar
 

@@ -1,10 +1,10 @@
 import { Agent, ToolCallNode, MessageBubble, NODE } from '@/lib/agent-types'
-import { contextSegments } from '@/lib/colors'
+import { contextSegments, getAgentGroupColor } from '@/lib/colors'
 import {
   FONT, LABEL_STACK, OVERLAY_VIEWPORT_MARGIN, BUBBLE_ANCHOR_GAP, BUBBLE_MAX_W, BUBBLE_MAX_LINES,
   TOOL_MAX_CARD_W, CONTEXT_RING, AGENT_DRAW, screenFontPx,
 } from '@/lib/canvas-constants'
-import { formatTokens } from '@/lib/utils'
+import { formatTokens, formatModelName } from '@/lib/utils'
 import { getNodeSizeMultiplier } from './node-size'
 import { measureTextCached } from './render-cache'
 import { truncateText, wrapText } from './draw-misc'
@@ -61,6 +61,9 @@ export interface LabelPlan {
   /** Column width shared by name, bar and token text */
   columnW: number
   name: string
+  /** Display model name ("Opus 5.5") under the name, in the model-family color; null when unknown */
+  modelText: string | null
+  modelColor: string
   tokenText: string | null
   bar: BarLayout | null
   over: boolean
@@ -207,6 +210,9 @@ function ringExtra(agent: Agent): number {
   return agent.isMain ? CONTEXT_RING.ringOffset + CONTEXT_RING.ringWidth / 2 + 2 : AGENT_DRAW.outerRingOffset + 2
 }
 
+/** Gap (screen px) between the name and the model line in a label stack. */
+export const MODEL_LINE_GAP = 1
+
 function tokenLine(ctx: CanvasRenderingContext2D, agent: Agent, maxW: number): string {
   const ratio = usageRatio(agent.tokensUsed, agent.tokensMax)
   const used = formatTokens(agent.tokensUsed)
@@ -287,13 +293,18 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
     ctx.font = captionFont
     const tokenText = hasTokens ? tokenLine(ctx, agent, LABEL_STACK.maxWidth) : null
     const tokW = tokenText ? measureTextCached(ctx, tokenText) : 0
-    const columnW = Math.min(LABEL_STACK.maxWidth, Math.max(LABEL_STACK.minWidth * (hasTokens ? 1 : 0), nameW, tokW))
+    const modelText = agent.model ? truncateText(ctx, formatModelName(agent.model), LABEL_STACK.maxWidth) : null
+    const modelW = modelText ? measureTextCached(ctx, modelText) : 0
+    const columnW = Math.min(LABEL_STACK.maxWidth, Math.max(LABEL_STACK.minWidth * (hasTokens ? 1 : 0), nameW, tokW, modelW))
 
     const nameH = Math.ceil(labelPx * 1.25)
     const tokH = Math.ceil(captionPx * 1.25)
-    const fullH = LABEL_STACK.padY * 2 + nameH + (hasTokens ? LABEL_STACK.innerGap + LABEL_STACK.barHeight + LABEL_STACK.innerGap + tokH : 0)
-    const compactW = Math.min(LABEL_STACK.maxWidth, nameW) + LABEL_STACK.padX * 2
-    const compactH = LABEL_STACK.padY * 2 + nameH
+    // The model line sits under the name in both full and compact modes.
+    const modelH = modelText ? MODEL_LINE_GAP + tokH : 0
+    const fullH = LABEL_STACK.padY * 2 + nameH + modelH + (hasTokens ? LABEL_STACK.innerGap + LABEL_STACK.barHeight + LABEL_STACK.innerGap + tokH : 0)
+    const compactColumnW = Math.min(LABEL_STACK.maxWidth, Math.max(nameW, modelW))
+    const compactW = compactColumnW + LABEL_STACK.padX * 2
+    const compactH = LABEL_STACK.padY * 2 + nameH + modelH
     const fullW = columnW + LABEL_STACK.padX * 2
 
     const top = e.sy + e.footprint + LABEL_STACK.gap
@@ -322,14 +333,15 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
     const rect = shown ? best.rect : fade.rect
     if (!rect || fade.alpha < 0.01) continue
     const effMode: LabelMode = shown ? mode : (fade.mode ?? mode)
-    const effColumnW = effMode === 'full' ? columnW : Math.min(LABEL_STACK.maxWidth, nameW)
+    const effColumnW = effMode === 'full' ? columnW : compactColumnW
 
     const bar = effMode === 'full' && hasTokens
       ? layoutContextBar(contextSegments(agent.contextBreakdown), agent.tokensUsed, agent.tokensMax)
       : null
     labels.set(id, {
       id, r: e.r, sx: e.sx, sy: e.sy, mode: effMode, rect, columnW: effColumnW,
-      name: nameFull, tokenText: effMode === 'full' ? tokenText : null, bar,
+      name: nameFull, modelText, modelColor: getAgentGroupColor(agent),
+      tokenText: effMode === 'full' ? tokenText : null, bar,
       over: usageRatio(agent.tokensUsed, agent.tokensMax) > 1,
       alpha: fade.alpha, shown,
     })
