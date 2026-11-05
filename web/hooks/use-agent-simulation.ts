@@ -52,9 +52,9 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   /** Events received but not yet folded into state (processed under a per-frame time budget). */
   const backlogRef = useRef<SimulationEvent[]>([])
   const animateRef = useRef<(timestamp: number, resumed?: boolean) => FrameMode>(() => 'idle')
-  /** Per-node collide radii (world px) from buildForceConfig, read by forceCollide */
   /** Tool starts skipped by historical folds, shared across slices so a later tool_end finds its start */
   const skippedToolsRef = useRef(new Map<string, { args: string; inputData?: Record<string, unknown> }>())
+  /** Per-node collide radii (world px) from buildForceConfig, read by forceCollide */
   const radiiRef = useRef<{ radii: Map<string, number>; fallback: number }>({ radii: new Map(), fallback: FORCE.collideRadius })
   /** Throttle React UI updates to ~4/sec — canvas stays smooth via frameRef */
   const lastUIUpdateRef = useRef(0)

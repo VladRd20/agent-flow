@@ -25,11 +25,15 @@ import { MessageFeedPanel } from "./message-feed-panel"
 import { TopBar } from "./top-bar"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { useAudioEffects } from "@/hooks/use-audio-effects"
+import type { ConversationMessage } from "@/hooks/simulation/types"
+
+/** Shared empty list so a hidden transcript panel keeps a stable prop. */
+const EMPTY_CONVERSATION: ConversationMessage[] = []
 
 export function AgentVisualizer() {
   const bridge = useVSCodeBridge()
   // Stable callbacks pulled out so hook deps are exact (bridge itself is a new object each render)
-  const { getSessionEventCount, flushSessionEvents, removeSession, selectSession, bridgeOpenFile } = bridge
+  const { getSessionEventCount, takeSwitchCursor, flushSessionEvents, removeSession, selectSession, bridgeOpenFile } = bridge
 
   const {
     frameRef,
@@ -109,13 +113,15 @@ export function AgentVisualizer() {
       if (prevSelectedRef.current !== null) {
         const outgoing = prevSelectedRef.current
         const snapshot = saveSnapshot()
-        // Events already in the buffer but not yet folded (sim backlog + bridge
-        // pending) are lost by restart()/restore, so don't count them as seen.
-        let pending = snapshot.pending
-        for (const e of bridge.pendingEvents) if (!e.sessionId || e.sessionId === outgoing) pending++
+        // Events in the buffer that were never folded are lost by restart()/
+        // restore, so they must not count as seen: the bridge's cursor (taken
+        // when the switch began, before it cleared pending) excludes bridge
+        // pending and anything that arrived since; snapshot.pending is the
+        // simulation's own unfolded backlog.
+        const delivered = takeSwitchCursor(outgoing) ?? getSessionEventCount(outgoing)
         sessionCacheRef.current.set(outgoing, {
           snapshot,
-          eventCount: Math.max(0, getSessionEventCount(outgoing) - pending),
+          eventCount: Math.max(0, delivered - snapshot.pending),
         })
       }
 
@@ -133,7 +139,7 @@ export function AgentVisualizer() {
 
       prevSelectedRef.current = bridge.selectedSessionId
     }
-  }, [bridge.selectedSessionId, restart, flushSessionEvents, saveSnapshot, restoreSnapshot, getSessionEventCount])
+  }, [bridge.selectedSessionId, restart, flushSessionEvents, saveSnapshot, restoreSnapshot, getSessionEventCount, takeSwitchCursor])
 
   // Timeline events — incremental: only processes new conversation messages
   const timelineCacheRef = useRef<{
@@ -241,10 +247,15 @@ export function AgentVisualizer() {
   // Session-wide conversation (all agents merged chronologically)
   // Only compute when the transcript panel is visible to avoid O(n log n) sort every frame
   const sessionConversation = useMemo(() => {
-    if (!showTranscript) return []
+    if (!showTranscript) return EMPTY_CONVERSATION
     const all = Array.from(conversations.values()).flat()
     return all.sort((a, b) => a.timestamp - b.timestamp)
   }, [conversations, showTranscript])
+
+  // Stable close handlers so the memoized panels don't re-render on every tick
+  const closeFileAttention = useCallback(() => setShowFileAttention(false), [])
+  const closeTranscript = useCallback(() => setShowTranscript(false), [])
+  const closeTimeline = useCallback(() => setShowTimeline(false), [])
 
   // Context menu items
   const contextMenuItems = selection.contextMenu ? (
@@ -405,7 +416,7 @@ export function AgentVisualizer() {
       <FileAttentionPanel
         visible={showFileAttention}
         fileAttention={fileAttention}
-        onClose={() => setShowFileAttention(false)}
+        onClose={closeFileAttention}
         onOpenFile={bridge.isVSCode ? openFile : undefined}
       />
 
@@ -414,7 +425,7 @@ export function AgentVisualizer() {
         visible={showTranscript}
         conversation={sessionConversation}
         runtime={sessionRuntime}
-        onClose={() => setShowTranscript(false)}
+        onClose={closeTranscript}
       />
 
       {/* Timeline panel (slide-in from bottom) */}
@@ -422,7 +433,7 @@ export function AgentVisualizer() {
         visible={showTimeline}
         timelineEntries={timelineEntries}
         currentTime={currentTime}
-        onClose={() => setShowTimeline(false)}
+        onClose={closeTimeline}
       />
 
       {/* Top bar: session tabs + info/controls */}

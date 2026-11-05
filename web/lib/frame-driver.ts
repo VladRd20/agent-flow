@@ -41,7 +41,7 @@ export function isCoarsePointer(): boolean {
     && window.matchMedia('(pointer: coarse)').matches
 }
 
-class FrameDriver {
+export class FrameDriver {
   private tasks: FrameTask[] = []
   private raf = 0
   private timer: ReturnType<typeof setTimeout> | 0 = 0
@@ -50,6 +50,10 @@ class FrameDriver {
   private resumed = true
   private coarse = false
   private listening = false
+  /** True while run() is executing task ticks. */
+  private running = false
+  /** wake() was called during a tick; keep going even if every task reports idle. */
+  private wakeRequested = false
 
   // perf stats (only touched when PERF_STATS_ENABLED)
   private statTicks = 0
@@ -74,6 +78,9 @@ class FrameDriver {
 
   /** Resume ticking (no-op if already running). Safe to call very often. */
   wake(): void {
+    // Called from inside a task's tick (raf is already 0 there): don't fork a
+    // second rAF chain — run() reschedules once at the end of the tick.
+    if (this.running) { this.wakeRequested = true; return }
     if (this.raf || this.timer || this.tasks.length === 0) return
     if (this.mode === 'idle') this.resumed = true
     this.mode = 'full'
@@ -108,6 +115,7 @@ class FrameDriver {
   }
 
   private schedule(): void {
+    if (this.raf || this.timer) return // exactly one pending tick at a time
     if (document.hidden) {
       this.timer = setTimeout(() => this.run(performance.now()), HIDDEN_INTERVAL_MS)
     } else {
@@ -132,12 +140,20 @@ class FrameDriver {
 
     const t0 = PERF_STATS_ENABLED ? performance.now() : 0
     let best: FrameMode = 'idle'
-    for (const task of this.tasks) {
-      if (hidden && !task.runWhenHidden) continue
-      let m: FrameMode = 'full'
-      try { m = task.tick(ts, resumed) } catch (err) { console.warn(`[frame-driver] ${task.name} failed:`, err) }
-      if (RANK[m] > RANK[best]) best = m
+    this.running = true
+    this.wakeRequested = false
+    try {
+      for (const task of this.tasks) {
+        if (hidden && !task.runWhenHidden) continue
+        let m: FrameMode = 'full'
+        try { m = task.tick(ts, resumed) } catch (err) { console.warn(`[frame-driver] ${task.name} failed:`, err) }
+        if (RANK[m] > RANK[best]) best = m
+      }
+    } finally {
+      this.running = false
     }
+    if (this.wakeRequested && best === 'idle') best = 'full'
+    this.wakeRequested = false
     this.mode = best
     if (PERF_STATS_ENABLED) this.recordStats(t0, best)
 

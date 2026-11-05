@@ -73,7 +73,8 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime } = input
   const bottomInset = Math.max(0, input.bottomInset ?? 0)
   const topInset = Math.max(0, input.topInset ?? 0)
-  if (agents.size === 0) return null
+  // Collapsed/hidden container (ResizeObserver can report 0 transiently): no fit
+  if (agents.size === 0 || !(dimensions.width > 0) || !(dimensions.height > 0)) return null
 
   // Return cached result if inputs haven't changed (reference equality for
   // collections — React creates new Map/array objects on state updates — plus

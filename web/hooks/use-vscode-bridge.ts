@@ -5,6 +5,7 @@ import { vscodeBridge, type ConnectionStatus, type AgentEvent, type SessionInfo 
 import { SimulationEvent } from '@/lib/agent-types'
 import { SeqTracker } from '@/lib/seq-tracker'
 import { SessionEventBuffer } from '@/lib/session-event-buffer'
+import { wakeFrames } from '@/lib/frame-driver'
 
 /** Max events kept in the per-session replay buffer (oldest are dropped).
  *  Without a cap a long-running/high-volume session grows this for the life of
@@ -35,6 +36,10 @@ interface BridgeHookResult {
   flushSessionEvents: (sessionId: string, fromIndex?: number) => void
   /** Get the current event count for a session (for save/restore) */
   getSessionEventCount: (sessionId: string) => number
+  /** Absolute buffer index the outgoing session had delivered to the simulation
+   *  when the last switch away from it began (undelivered pending excluded).
+   *  One-shot: cleared once read. undefined if no switch away from it was recorded. */
+  takeSwitchCursor: (sessionId: string) => number | undefined
   /** Ref to the currently selected session ID — updated synchronously, not via React state */
   selectedSessionIdRef: React.RefObject<string | null>
   /** Session IDs that have received events while not selected */
@@ -73,6 +78,23 @@ export function useVSCodeBridge(): BridgeHookResult {
    *  Prevents the animation frame from processing events in the wrong simulation context. */
   const sessionSwitchPendingRef = useRef(false)
   const [sessionsWithActivity, setSessionsWithActivity] = useState<Set<string>>(new Set())
+  /** Where the outgoing session's delivery stood when a switch began (see takeSwitchCursor). */
+  const switchCursorRef = useRef<{ sessionId: string; end: number } | null>(null)
+
+  /** Start switching the selection. Records the outgoing session's delivered
+   *  cursor BEFORE pending is cleared: events still pending, or arriving before
+   *  the layout effect swaps state, were never folded and must be replayed when
+   *  the user comes back. Only refs are touched, so this is safe from any closure. */
+  const beginSwitch = (nextId: string | null) => {
+    const prev = selectedSessionIdRef.current
+    if (!sessionSwitchPendingRef.current && prev && prev !== nextId) {
+      const end = sessionEventsRef.current.get(prev)?.end ?? 0
+      switchCursorRef.current = { sessionId: prev, end: Math.max(0, end - pendingEventsRef.current.length) }
+    }
+    sessionSwitchPendingRef.current = true
+    pendingEventsRef.current.length = 0
+    selectedSessionIdRef.current = nextId
+  }
 
   // Connect to standalone dev relay server via SSE when not in VS Code
   useEffect(() => {
@@ -210,6 +232,9 @@ export function useVSCodeBridge(): BridgeHookResult {
       const selected = selectedSessionIdRef.current
       if (selected && event.sessionId === selected && !sessionSwitchPendingRef.current) {
         pendingEventsRef.current.push(simEvent)
+        // The simulation drains pending from the shared frame loop, which stops
+        // when everything is idle: new data must restart it.
+        wakeFrames()
       } else if (event.sessionId && event.sessionId !== selected) {
         // Track background activity for unselected sessions
         setSessionsWithActivity(prev => {
@@ -253,6 +278,7 @@ export function useVSCodeBridge(): BridgeHookResult {
         setSelectedSessionId(null)
         selectedSessionIdRef.current = null
         pendingEventsRef.current.length = 0
+        switchCursorRef.current = null
         sessionEventsRef.current.clear()
         seqTrackerRef.current.clear()
         setSessionsWithActivity(new Set())
@@ -280,9 +306,7 @@ export function useVSCodeBridge(): BridgeHookResult {
             return b.lastActivityTime - a.lastActivityTime
           })
           const autoId = sorted[0].id
-          sessionSwitchPendingRef.current = true
-          pendingEventsRef.current.length = 0
-          selectedSessionIdRef.current = autoId
+          beginSwitch(autoId)
           setSelectedSessionId(autoId)
         }
       } else if (type === 'started') {
@@ -306,9 +330,7 @@ export function useVSCodeBridge(): BridgeHookResult {
         // Auto-select newly started session.
         // Set switch-pending flag to prevent the animation frame from processing
         // events in the wrong simulation state before useLayoutEffect swaps it.
-        sessionSwitchPendingRef.current = true
-        pendingEventsRef.current.length = 0
-        selectedSessionIdRef.current = session.id
+        beginSwitch(session.id)
         setSelectedSessionId(session.id)
       } else if (type === 'updated') {
         const { sessionId, label } = data as { sessionId: string; label: string }
@@ -342,9 +364,7 @@ export function useVSCodeBridge(): BridgeHookResult {
    *  from useLayoutEffect after the simulation state has been saved/swapped. */
   const selectSession = useCallback((sessionId: string | null) => {
     // Block event delivery to pending until the simulation state is swapped
-    sessionSwitchPendingRef.current = true
-    pendingEventsRef.current.length = 0
-    selectedSessionIdRef.current = sessionId
+    beginSwitch(sessionId)
     setSelectedSessionId(sessionId)
     if (sessionId) {
       setSessionsWithActivity(prev => {
@@ -364,10 +384,18 @@ export function useVSCodeBridge(): BridgeHookResult {
     pendingEventsRef.current.length = 0
     // push in slices: spreading a huge array can exceed the argument limit
     for (let i = 0; i < buffered.length; i += 5000) pendingEventsRef.current.push(...buffered.slice(i, i + 5000))
+    if (buffered.length > 0) wakeFrames()
   }, [])
 
   const getSessionEventCount = useCallback((sessionId: string): number => {
     return sessionEventsRef.current.get(sessionId)?.end ?? 0
+  }, [])
+
+  const takeSwitchCursor = useCallback((sessionId: string): number | undefined => {
+    const c = switchCursorRef.current
+    if (!c || c.sessionId !== sessionId) return undefined
+    switchCursorRef.current = null
+    return c.end
   }, [])
 
   const dismissedSessionsRef = useRef<Map<string, SessionInfo>>(new Map())
@@ -413,6 +441,7 @@ export function useVSCodeBridge(): BridgeHookResult {
     selectSession,
     flushSessionEvents,
     getSessionEventCount,
+    takeSwitchCursor,
     sessionsWithActivity,
     removeSession,
   }
