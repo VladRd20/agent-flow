@@ -15,6 +15,8 @@ interface MessageFeedPanelProps {
   agents: Map<string, Agent>
   onAgentClick: (agentId: string | null) => void
   selectedAgentId: string | null
+  /** All view only: session id -> tab label, used to tag each entry with its session */
+  sessionLabels?: ReadonlyMap<string, string>
 }
 
 // Only show text messages (assistant, user, thinking) — tool calls visible via agent selection
@@ -27,6 +29,14 @@ const PREVIEW_MAX = 50
 const MESSAGE_TRUNCATE_MAX = 120
 
 const MESSAGE_GAP = 4
+const SESSION_TAG_MAX = 16
+
+/** Short session tag for All-view entries; null when not in All or when it would repeat the agent's own name. */
+function sessionTagFor(agent: Agent | undefined, labels: ReadonlyMap<string, string> | undefined): string | null {
+  const label = agent?.sessionId ? labels?.get(agent.sessionId) : undefined
+  if (!label || label === agent?.name) return null
+  return label.length > SESSION_TAG_MAX ? label.slice(0, SESSION_TAG_MAX) + '..' : label
+}
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
@@ -35,6 +45,7 @@ function MessageFeedPanelImpl({
   agents,
   onAgentClick,
   selectedAgentId,
+  sessionLabels,
 }: MessageFeedPanelProps) {
   const isMobile = useIsMobile()
   const [expanded, setExpanded] = useState(false)
@@ -197,6 +208,7 @@ function MessageFeedPanelImpl({
     const role = ROLE_COLORS[latestMessage.type] ?? ROLE_COLORS.assistant
     const preview = latestMessage.content.replace(/\n/g, ' ').slice(0, PREVIEW_MAX)
 
+    const collapsedTag = sessionTagFor(agent, sessionLabels)
     const stateText = agent?.state ? agent.state.charAt(0).toUpperCase() + agent.state.slice(1) : role.label
 
     return (
@@ -223,6 +235,7 @@ function MessageFeedPanelImpl({
           {isMobile ? (
             <span className="text-xs font-mono truncate min-w-0 whitespace-nowrap">
               <span className="font-semibold" style={{ color: COLORS.textPrimary }}>{agentName}</span>
+              {collapsedTag && <span style={{ color: COLORS.textDim }}> · {collapsedTag}</span>}
               <span style={{ color: role.text + 'cc' }}> · {stateText}</span>
             </span>
           ) : (
@@ -230,6 +243,9 @@ function MessageFeedPanelImpl({
               <span className="text-[9px] font-mono font-semibold shrink-0" style={{ color: COLORS.textPrimary }}>
                 {agentName.length > COLLAPSED_AGENT_NAME_MAX ? agentName.slice(0, COLLAPSED_AGENT_NAME_MAX) + '..' : agentName}
               </span>
+              {collapsedTag && (
+                <span className="text-[8px] font-mono shrink-0" style={{ color: COLORS.textDim, opacity: 0.8 }}>· {collapsedTag}</span>
+              )}
               <span className="text-[9px] font-mono truncate" style={{ color: role.text + 'cc' }}>
                 {preview}{latestMessage.content.length > PREVIEW_MAX ? '...' : ''}
               </span>
@@ -333,6 +349,7 @@ function MessageFeedPanelImpl({
                     <MessageRow
                       message={msg}
                       agentName={agents.get(msg.agentId)?.name ?? msg.agentId}
+                      sessionTag={sessionTagFor(agents.get(msg.agentId), sessionLabels)}
                       showAgent={activeTab === 'all'}
                       isSelected={selectedAgentId === msg.agentId}
                       onClick={() => { onAgentClick(msg.agentId); setExpanded(false) }}
@@ -384,9 +401,10 @@ function TabButton({ label, active, onClick, color, hasUnread }: {
 
 // ── Message Row ──
 
-function MessageRow({ message, agentName, showAgent, isSelected, onClick, runtime }: {
+function MessageRow({ message, agentName, sessionTag, showAgent, isSelected, onClick, runtime }: {
   message: ConversationMessage
   agentName: string
+  sessionTag?: string | null
   showAgent: boolean
   isSelected: boolean
   onClick: () => void
@@ -415,6 +433,11 @@ function MessageRow({ message, agentName, showAgent, isSelected, onClick, runtim
         {showAgent && (
           <span className="text-[9px] font-mono" style={{ color: COLORS.textMuted }}>
             {agentName}
+          </span>
+        )}
+        {sessionTag && (
+          <span className="text-[8px] font-mono truncate" style={{ color: COLORS.textDim, opacity: 0.8 }} title={`Session: ${sessionTag}`}>
+            · {sessionTag}
           </span>
         )}
       </div>

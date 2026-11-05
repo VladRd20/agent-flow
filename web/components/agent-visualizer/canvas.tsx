@@ -1,5 +1,6 @@
 'use client'
 
+import { setViewAspect } from '@/lib/view-aspect'
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { Particle, Edge, DepthParticle } from '@/lib/agent-types'
 import type { SimulationState } from '@/hooks/simulation/types'
@@ -219,6 +220,7 @@ export function AgentCanvas({
         const h = entry.contentRect.height
         dprRef.current = cappedDpr()
         setDimensions({ width: w, height: h })
+        setViewAspect(w, h)
         bloomRef.current?.resize(w * dprRef.current, h * dprRef.current)
       }
       wakeFrames()

@@ -287,7 +287,11 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
     const { agent, id } = e
     ctx.font = labelFont
     const hasTokens = agent.tokensUsed > 0 && (agent.state !== 'complete' || agent.opacity > 0.5)
-    const maxName = LABEL_STACK.maxWidth
+    // All view: a session's main shows (nearly) its whole tab label, and all of it while hovered/selected.
+    const stackMax = agent.isMain && agent.sessionId
+      ? (id === input.hoveredAgentId || id === input.selectedAgentId ? LABEL_STACK.maxWidthMainAllHover : LABEL_STACK.maxWidthMainAll)
+      : LABEL_STACK.maxWidth
+    const maxName = stackMax
     const nameFull = truncateText(ctx, agent.name, maxName)
     const nameW = measureTextCached(ctx, nameFull)
     ctx.font = captionFont
@@ -295,14 +299,14 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
     const tokW = tokenText ? measureTextCached(ctx, tokenText) : 0
     const modelText = agent.model ? truncateText(ctx, formatModelName(agent.model), LABEL_STACK.maxWidth) : null
     const modelW = modelText ? measureTextCached(ctx, modelText) : 0
-    const columnW = Math.min(LABEL_STACK.maxWidth, Math.max(LABEL_STACK.minWidth * (hasTokens ? 1 : 0), nameW, tokW, modelW))
+    const columnW = Math.min(stackMax, Math.max(LABEL_STACK.minWidth * (hasTokens ? 1 : 0), nameW, tokW, modelW))
 
     const nameH = Math.ceil(labelPx * 1.25)
     const tokH = Math.ceil(captionPx * 1.25)
     // The model line sits under the name in both full and compact modes.
     const modelH = modelText ? MODEL_LINE_GAP + tokH : 0
     const fullH = LABEL_STACK.padY * 2 + nameH + modelH + (hasTokens ? LABEL_STACK.innerGap + LABEL_STACK.barHeight + LABEL_STACK.innerGap + tokH : 0)
-    const compactColumnW = Math.min(LABEL_STACK.maxWidth, Math.max(nameW, modelW))
+    const compactColumnW = Math.min(stackMax, Math.max(nameW, modelW))
     const compactW = compactColumnW + LABEL_STACK.padX * 2
     const compactH = LABEL_STACK.padY * 2 + nameH + modelH
     const fullW = columnW + LABEL_STACK.padX * 2

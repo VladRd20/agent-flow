@@ -343,6 +343,11 @@ export function AgentVisualizer() {
     if (sid) selectSession(sid)
   }, [liveAgents, selectSession])
 
+  const sessionLabels = useMemo(
+    () => (isAllView ? new Map(bridge.sessions.map(s => [s.id, s.label])) : undefined),
+    [isAllView, bridge.sessions],
+  )
+
   const openFile = useCallback((filePath: string, line?: number) => {
     bridgeOpenFile(filePath, line)
   }, [bridgeOpenFile])
@@ -390,6 +395,7 @@ export function AgentVisualizer() {
         agents={agents}
         onAgentClick={selection.handleAgentClick}
         selectedAgentId={selection.selectedAgentId}
+        sessionLabels={sessionLabels}
       />
 
       {/* Agent detail card (floating, tethered to node) */}

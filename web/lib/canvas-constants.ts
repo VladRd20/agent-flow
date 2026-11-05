@@ -545,6 +545,9 @@ export const LABEL_STACK = {
   /** Width bounds of the label + bar + token column */
   minWidth: 72,
   maxWidth: 150,
+  /** Main-node label width in the All view (~30 chars), and while hovered/selected (full label) */
+  maxWidthMainAll: 230,
+  maxWidthMainAllHover: 420,
   /** Gap between the node edge and the stack plate */
   gap: 6,
   padX: 6,

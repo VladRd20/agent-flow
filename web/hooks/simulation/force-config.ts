@@ -1,3 +1,4 @@
+import { getViewAspect } from '@/lib/view-aspect'
 import type { Agent, Edge } from '@/lib/agent-types'
 import { collideRadiusFor, suggestForceParams } from '@/components/agent-visualizer/canvas/layout-metrics'
 import { computeForceTargets, type ForceTarget } from './main-anchors'
@@ -36,6 +37,6 @@ export function buildForceConfig(agents: Map<string, Agent>, edges: Edge[]): For
     linkDistance: suggested.linkDistance,
     radii,
     fallbackRadius: suggested.collideRadius,
-    targets: computeForceTargets(agents.values()),
+    targets: computeForceTargets(agents.values(), getViewAspect()),
   }
 }
