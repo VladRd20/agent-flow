@@ -11,6 +11,7 @@ import { createRelay } from '../../scripts/relay'
 import { createTelemetryClient } from '../../scripts/telemetry'
 import { serveStatic } from './static'
 import { isLoopbackHost, isAllowedRemoteHost } from '../../extension/src/request-guard'
+import { createAuthGate, isValidPasswordHash } from './auth'
 
 interface ServerOptions {
   port: number
@@ -35,6 +36,15 @@ export async function startServer(options: ServerOptions) {
   const loopbackBind = host === '127.0.0.1' || host === 'localhost' || host === '::1'
   const extraHosts = (process.env.AGENT_FLOW_ALLOWED_HOSTS || '').split(',').filter(Boolean)
 
+  // Optional password gate (see auth.ts). A set-but-malformed hash fails closed
+  // rather than silently serving without auth.
+  const passwordHash = (process.env.AGENT_FLOW_PASSWORD_HASH || '').trim()
+  if (passwordHash && !isValidPasswordHash(passwordHash)) {
+    console.error('AGENT_FLOW_PASSWORD_HASH is set but malformed - refusing to start. Regenerate it with --hash-password.')
+    process.exit(1)
+  }
+  const authGate = passwordHash ? createAuthGate(passwordHash) : null
+
   const server = http.createServer((req, res) => {
     // Reject DNS-rebinding requests, which reach the server under a foreign
     // Host. Loopback binds accept loopback names only; a LAN/WAN bind also
@@ -49,6 +59,9 @@ export async function startServer(options: ServerOptions) {
     }
 
     const pathname = (req.url || '/').split(/[?#]/, 1)[0]
+
+    if (authGate && authGate.handle(req, res, pathname)) return
+
     const isRead = req.method === 'GET' || req.method === 'HEAD'
 
     if (!isRead) {
@@ -83,7 +96,10 @@ export async function startServer(options: ServerOptions) {
 
   server.listen(port, host, () => {
     const url = `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`
-    console.log(`Server running at ${url}${host === '0.0.0.0' ? ' (also reachable on your LAN - no auth is enforced)' : ''}`)
+    const exposure = host === '0.0.0.0'
+      ? (authGate ? ' (also reachable on your LAN - password required for non-local clients)' : ' (also reachable on your LAN - no auth is enforced)')
+      : (authGate ? ' (password required for proxied clients)' : '')
+    console.log(`Server running at ${url}${exposure}`)
     console.log('Waiting for agent events...\n')
 
     if (openBrowser) {

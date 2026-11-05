@@ -29,9 +29,12 @@ Usage: agent-flow [options]
 
 Options:
   -p, --port <number>  Port for the server (default: ${DEFAULT_RELAY_PORT})
-  --host <address>     Address to bind to (default: ${DEFAULT_APP_HOST}). No auth
-                        exists on this server - only bind beyond loopback on a
-                        trusted network.
+  --host <address>     Address to bind to (default: ${DEFAULT_APP_HOST}). Without
+                        AGENT_FLOW_PASSWORD_HASH there is no auth - only bind
+                        beyond loopback on a trusted network.
+  --hash-password      Read a password from stdin and print a value for
+                        AGENT_FLOW_PASSWORD_HASH (enables a login page for
+                        every client except direct localhost).
   --no-open            Don't open the browser automatically
   -v, --verbose        Show detailed event logs
   -h, --help           Show this help message

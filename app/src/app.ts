@@ -12,7 +12,24 @@
 import { parseArgs } from './args'
 import { ensureSetup } from '../../scripts/setup'
 import { startServer } from './server'
+import { hashPassword } from './auth'
 
+// `--hash-password`: read a password from stdin, print an AGENT_FLOW_PASSWORD_HASH value, exit.
+if (process.argv.includes('--hash-password')) {
+  let input = ''
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (c) => { input += c })
+  process.stdin.on('end', () => {
+    const pw = input.replace(/\r?\n$/, '')
+    if (!pw) { console.error('Empty password.'); process.exit(1) }
+    console.log(hashPassword(pw))
+    process.exit(0)
+  })
+} else {
+  main()
+}
+
+function main() {
 const args = parseArgs(process.argv.slice(2))
 
 console.log('Agent Flow (local fork)\n')
@@ -28,3 +45,4 @@ startServer({
   workspace: process.cwd(),
   verbose: args.verbose,
 })
+}
