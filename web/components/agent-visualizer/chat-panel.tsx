@@ -48,13 +48,11 @@ function AgentChatPanelImpl({
       {...stopPropagationHandlers}
     >
       <div
-        className={`glass-card af-selectable ${isMobile ? 'af-sheet' : ''}`}
+        className={`glass-card af-selectable ${isMobile ? 'af-sheet af-mh-chat' : ''}`}
         style={{
           display: 'flex',
           flexDirection: 'column',
-          maxHeight: isMobile
-            ? 'min(70dvh, calc(100dvh - var(--af-sheet-top) - var(--af-detail-h)))'
-            : CARD.chat.maxHeight,
+          maxHeight: isMobile ? undefined : CARD.chat.maxHeight,
           borderRadius: isMobile ? '12px 12px 0 0' : undefined,
         }}
       >

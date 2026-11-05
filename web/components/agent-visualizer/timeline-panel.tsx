@@ -242,7 +242,7 @@ function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: T
           </span>
         </PanelHeader>
 
-        <div className="overflow-auto" style={{ maxHeight: isMobile ? 'min(50dvh, 50vh)' : 300 }}>
+        <div className={`overflow-auto ${isMobile ? 'af-mh-timeline' : ''}`} style={{ maxHeight: isMobile ? undefined : 300 }}>
           <canvas ref={canvasRef} style={{ display: 'block' }} onMouseMove={handleMouseMove} />
         </div>
 

@@ -253,12 +253,10 @@ function MessageFeedPanelImpl({
       onClick={(e) => e.stopPropagation()}
     >
       <div
-        className="glass-card flex flex-col"
+        className={`glass-card flex flex-col ${isMobile ? 'af-mh-feed' : ''}`}
         style={{
           width: isMobile ? '100%' : 320,
-          maxHeight: isMobile
-            ? 'min(60dvh, calc(100dvh - var(--af-feed-top) - var(--af-above-bar)))'
-            : 420,
+          maxHeight: isMobile ? undefined : 420,
         }}
       >
         {/* Header */}

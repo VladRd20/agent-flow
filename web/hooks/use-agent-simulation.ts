@@ -53,6 +53,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const backlogRef = useRef<SimulationEvent[]>([])
   const animateRef = useRef<(timestamp: number, resumed?: boolean) => FrameMode>(() => 'idle')
   /** Per-node collide radii (world px) from buildForceConfig, read by forceCollide */
+  /** Tool starts skipped by historical folds, shared across slices so a later tool_end finds its start */
+  const skippedToolsRef = useRef(new Map<string, { args: string; inputData?: Record<string, unknown> }>())
   const radiiRef = useRef<{ radii: Map<string, number>; fallback: number }>({ radii: new Map(), fallback: FORCE.collideRadius })
   /** Throttle React UI updates to ~4/sec — canvas stays smooth via frameRef */
   const lastUIUpdateRef = useRef(0)
@@ -267,6 +269,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
         const folded = foldEvents(slice, currentState, ctx, {
           resolveTime: (e) => Math.max(e.time || newTime, newTime),
           visualCutoff,
+          skippedTools: skippedToolsRef.current,
         })
         currentState = folded.state
         for (const e of folded.applied) newEvents.push(e)
@@ -274,6 +277,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
         if (historical && performance.now() - frameStart > FOLD_BUDGET_MS) break
       }
       backlog.splice(0, done)
+      if (backlog.length === 0) skippedToolsRef.current.clear()
       if (historical && backlog.length === 0) {
         const { agents, edges } = currentState
         setTimeout(() => syncForceSimulation(agents, edges), 0)
@@ -373,6 +377,26 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     return unregister
   }, [state.isPlaying])
 
+  // Live wall-clock heartbeat: while the frame driver is fully idle the sim clock
+  // would freeze (looks hung over hours). Advance it at 1Hz without waking the
+  // canvas (draw only reacts to scene identities, not currentTime).
+  useEffect(() => {
+    if (!state.isPlaying || useMockData) return
+    let last = performance.now()
+    const id = setInterval(() => {
+      const now = performance.now()
+      const dt = Math.min((now - last) / 1000, 60)
+      last = now
+      if (!frameDriver.isIdle) return
+      const cur = frameRef.current
+      if (!cur.isPlaying) return
+      const t = cur.currentTime + dt * cur.speed
+      frameRef.current = { ...cur, currentTime: t, maxTimeReached: Math.max(cur.maxTimeReached, t) }
+      setState(frameRef.current)
+    }, 1000)
+    return () => clearInterval(id)
+  }, [state.isPlaying, useMockData])
+
   // New external events must wake an idle driver.
   useEffect(() => { wakeFrames() }, [externalEvents, state.speed])
 
@@ -395,6 +419,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const restart = useCallback((keepActive = false) => {
     blockIdCounter.current = 0
     backlogRef.current.length = 0
+    skippedToolsRef.current.clear()
     if (!keepActive) {
       commitState(createEmptyState({ isPlaying: true, speed: frameRef.current.speed }))
       return
@@ -483,14 +508,17 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   }, [processEventWithContext, useMockData, syncForceSimulation, commitState])
 
   // ─── Session state save/restore ──────────────────────────────────────────
-  const saveSnapshot = useCallback((): { simState: SimulationState; blockId: number } => ({
+  /** `pending` = events received but not yet folded into simState (must be re-delivered on restore). */
+  const saveSnapshot = useCallback((): { simState: SimulationState; blockId: number; pending: number } => ({
     simState: frameRef.current,
     blockId: blockIdCounter.current,
+    pending: backlogRef.current.length,
   }), [])
 
-  const restoreSnapshot = useCallback((snapshot: { simState: SimulationState; blockId: number }) => {
+  const restoreSnapshot = useCallback((snapshot: { simState: SimulationState; blockId: number; pending?: number }) => {
     blockIdCounter.current = snapshot.blockId
     backlogRef.current.length = 0
+    skippedToolsRef.current.clear()
     let st = snapshot.simState
     // A snapshot taken while paused/scrubbed still has un-replayed log entries.
     // Restoring it with isPlaying=true would play them back at 1x under a LIVE

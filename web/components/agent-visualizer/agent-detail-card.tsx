@@ -78,7 +78,6 @@ export function AgentDetailCard({
         right: 0,
         bottom: 0,
         zIndex: Z.sheet,
-        maxHeight: 'min(45dvh, calc(100dvh - var(--af-sheet-top) - 80px))',
         overflowY: 'auto',
         overscrollBehavior: 'contain',
         borderRadius: '12px 12px 0 0',
@@ -91,7 +90,7 @@ export function AgentDetailCard({
       innerRef={cardRef}
       role="dialog"
       aria-label={`${agent.name} details`}
-      className={`agent-detail-card${isMobile ? ' af-sheet' : ''}`}
+      className={`agent-detail-card${isMobile ? ' af-sheet af-mh-detail' : ''}`}
       style={style}
     >
       <PanelHeader onClose={onClose} className="mb-3">

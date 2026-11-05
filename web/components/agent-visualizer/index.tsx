@@ -107,9 +107,15 @@ export function AgentVisualizer() {
       setIsReviewing(false)
       // Save outgoing session state (if any)
       if (prevSelectedRef.current !== null) {
-        sessionCacheRef.current.set(prevSelectedRef.current, {
-          snapshot: saveSnapshot(),
-          eventCount: getSessionEventCount(prevSelectedRef.current),
+        const outgoing = prevSelectedRef.current
+        const snapshot = saveSnapshot()
+        // Events already in the buffer but not yet folded (sim backlog + bridge
+        // pending) are lost by restart()/restore, so don't count them as seen.
+        let pending = snapshot.pending
+        for (const e of bridge.pendingEvents) if (!e.sessionId || e.sessionId === outgoing) pending++
+        sessionCacheRef.current.set(outgoing, {
+          snapshot,
+          eventCount: Math.max(0, getSessionEventCount(outgoing) - pending),
         })
       }
 

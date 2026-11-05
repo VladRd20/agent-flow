@@ -359,3 +359,22 @@ button:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* Mobile panel height caps: vh fallback first, dvh override. Inline styles with
+   dvh are dropped entirely on iOS < 15.4 (uncapped panels), classes degrade. */
+.af-mh-detail {
+  max-height: min(45vh, calc(100vh - var(--af-sheet-top) - 80px));
+  max-height: min(45dvh, calc(100dvh - var(--af-sheet-top) - 80px));
+}
+.af-mh-chat {
+  max-height: min(70vh, calc(100vh - var(--af-sheet-top) - var(--af-detail-h)));
+  max-height: min(70dvh, calc(100dvh - var(--af-sheet-top) - var(--af-detail-h)));
+}
+.af-mh-feed {
+  max-height: min(60vh, calc(100vh - var(--af-feed-top) - var(--af-above-bar)));
+  max-height: min(60dvh, calc(100dvh - var(--af-feed-top) - var(--af-above-bar)));
+}
+.af-mh-timeline {
+  max-height: 50vh;
+  max-height: 50dvh;
+}
