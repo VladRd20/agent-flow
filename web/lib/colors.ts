@@ -44,8 +44,8 @@ export const COLORS = {
   // UI Chrome
   nodeInterior: 'rgba(10, 15, 40, 0.5)',
   textPrimary: '#aaeeff',
-  textDim: '#66ccff90',
-  textMuted: '#66ccff50',
+  textDim: '#7fd6ffd9',
+  textMuted: '#66ccffb8',
 
   // Glass card
   glassBg: 'rgba(10, 15, 30, 0.7)',
@@ -133,6 +133,9 @@ export const COLORS = {
 
   // Canvas drawing — agent/tool card backgrounds
   cardBgDark: 'rgba(5, 5, 16, 0.8)',
+  /** Opaque-ish plate behind canvas labels / bubbles / tool cards (legibility over edges) */
+  labelPlate: 'rgba(8, 12, 26, 0.9)',
+  labelPlateBorder: 'rgba(100, 200, 255, 0.22)',
   cardBg: 'rgba(10, 15, 30, 0.6)',
   cardBgSelected: 'rgba(10, 15, 30, 0.8)',
   cardBgError: 'rgba(40, 10, 15, 0.8)',

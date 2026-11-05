@@ -33,6 +33,11 @@ export class EasedValueMap {
     return current
   }
 
+  /** Read the current eased value without stepping or marking the id as live. */
+  peek(id: string): number | undefined {
+    return this.values.get(id)
+  }
+
   /**
    * Drop ids that weren't `step()`-ed this frame (the agent/edge/tool call
    * was removed) so the map doesn't grow unbounded over a long session.

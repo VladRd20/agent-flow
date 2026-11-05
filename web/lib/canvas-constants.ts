@@ -480,7 +480,7 @@ export const PERF_OVERLAY = {
   height: 140,
   padding: 8,
   lineHeight: 18,
-  font: '12px monospace',
+  font: '12px ui-monospace, Menlo, Consolas, monospace',
   maxFrameSamples: 120,
   fpsWarning: 30,
   fpsCaution: 50,
@@ -501,3 +501,67 @@ export const HIT_DETECTION = {
   bubbleCharWidth: 4.2,
 } as const
 
+
+// ─── Typography ─────────────────────────────────────────────────────────────
+
+/** Single monospace font stack for all canvas text. */
+export const FONT_STACK = "ui-monospace, 'SF Mono', 'Geist Mono', Menlo, Consolas, monospace"
+
+export const FONT = {
+  /** CSS font shorthand for canvas: FONT.mono(11) -> "11px ui-monospace, ..." */
+  mono: (px: number, weight: 'normal' | 'bold' | '600' = 'normal', italic = false): string =>
+    `${italic ? 'italic ' : ''}${weight === 'normal' ? '' : weight + ' '}${px}px ${FONT_STACK}`,
+} as const
+
+/**
+ * Canvas type scale. Sizes are SCREEN pixels: overlay text (labels, bubbles,
+ * tool cards) is rendered at a near-constant on-screen size regardless of the
+ * camera zoom so it stays legible when zoomed out and does not balloon when
+ * zoomed in. `coarse` (touch / small viewport) bumps every level by 1px.
+ */
+export const TYPE = {
+  caption: { base: 10, min: 10, max: 12 },
+  label: { base: 11, min: 11, max: 13 },
+  title: { base: 12, min: 12, max: 15 },
+} as const
+export type TypeLevel = keyof typeof TYPE
+
+/** Zoom response of overlay text: 0 = perfectly constant screen size. */
+export const TYPE_ZOOM_EXPONENT = 0.2
+
+/**
+ * On-screen font size in px for a type level at a camera zoom.
+ * Constant-ish: base * zoom^0.2 clamped to [min, max]; +1px on coarse pointers.
+ */
+export function screenFontPx(level: TypeLevel, zoom: number, coarse = false): number {
+  const t = TYPE[level]
+  const z = zoom > 0 && Number.isFinite(zoom) ? zoom : 1
+  const raw = t.base * Math.pow(z, TYPE_ZOOM_EXPONENT)
+  const bump = coarse ? 1 : 0
+  return Math.min(t.max + bump, Math.max(t.min + bump, Math.round(raw * 2) / 2 + bump))
+}
+
+// ─── Overlay (label stack / bubble / tool card) layout, screen px ──────────
+
+export const LABEL_STACK = {
+  /** Width bounds of the label + bar + token column */
+  minWidth: 72,
+  maxWidth: 150,
+  /** Gap between the node edge and the stack plate */
+  gap: 6,
+  padX: 6,
+  padY: 4,
+  barHeight: 5,
+  /** Vertical gaps inside the plate */
+  innerGap: 3,
+  /** Extra clearance kept between placed rects */
+  rectPadding: 3,
+  /** Per-frame label fade rate (alpha/sec) when decluttering shows/hides labels */
+  fadeRate: 7,
+  /** Over-capacity end cap width */
+  overCapWidth: 4,
+} as const
+
+export const OVERLAY_VIEWPORT_MARGIN = 6
+/** Screen-space gap between node footprint and bubbles */
+export const BUBBLE_ANCHOR_GAP = 8
