@@ -17,6 +17,8 @@ export interface FitInput {
   dimensions: { width: number; height: number }
   selectedAgentId: string | null
   simTime: number
+  /** Pixels at the bottom of the viewport covered by chrome (e.g. control bar); fit centers above it */
+  bottomInset?: number
 }
 
 export interface FitCache {
@@ -26,11 +28,12 @@ export interface FitCache {
   selectedAgentId: string | null
   width: number
   height: number
+  bottomInset: number
   result: Transform | null
 }
 
 export function createFitCache(): FitCache {
-  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, result: null }
+  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, bottomInset: 0, result: null }
 }
 
 /** Collect an agent and all its descendants (BFS) */
@@ -57,6 +60,7 @@ export function getDescendantIds(agents: Map<string, Agent>, rootId: string): Se
  */
 export function computeFitTransform(input: FitInput, cache: FitCache): Transform | null {
   const { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime } = input
+  const bottomInset = Math.max(0, input.bottomInset ?? 0)
   if (agents.size === 0) return null
 
   // Return cached result if inputs haven't changed (reference equality for
@@ -68,7 +72,8 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
     && cache.discoveries === discoveries
     && cache.selectedAgentId === selectedAgentId
     && cache.width === dimensions.width
-    && cache.height === dimensions.height) {
+    && cache.height === dimensions.height
+    && cache.bottomInset === bottomInset) {
     return cache.result
   }
 
@@ -134,6 +139,7 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   cache.selectedAgentId = selectedAgentId
   cache.width = dimensions.width
   cache.height = dimensions.height
+  cache.bottomInset = bottomInset
 
   if (minX === Infinity) {
     cache.result = null
@@ -144,10 +150,12 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const boundsH = maxY - minY + padding * 2
   const centerX = (minX + maxX) / 2
   const centerY = (minY + maxY) / 2
-  const scale = Math.min(dimensions.width / boundsW, dimensions.height / boundsH, 2)
+  // Fit within the area not covered by bottom chrome (never collapse below 25% of the height)
+  const availH = Math.max(dimensions.height - bottomInset, dimensions.height * 0.25)
+  const scale = Math.min(dimensions.width / boundsW, availH / boundsH, 2)
   const result = {
     x: dimensions.width / 2 - centerX * scale,
-    y: dimensions.height / 2 - centerY * scale,
+    y: availH / 2 - centerY * scale,
     scale,
   }
   cache.result = result

@@ -65,3 +65,15 @@ test('computeFitTransform cache still hits when dimensions are unchanged', () =>
   const second = computeFitTransform({ ...input }, cache) // new object, same collection refs & dims
   assert.equal(second, first)
 })
+
+test('computeFitTransform leaves room for bottom chrome and recomputes when the inset changes', () => {
+  const cache = createFitCache()
+  const input = baseInput({ dimensions: { width: 400, height: 800 } })
+  const plain = computeFitTransform(input, cache)!
+  const inset = computeFitTransform({ ...input, bottomInset: 200 }, cache)!
+  assert.notEqual(inset, plain)
+  // Content center sits at the middle of the visible (non-covered) height
+  assert.ok(inset.y < plain.y, 'content is shifted up to clear the bottom bar')
+  const noInset = computeFitTransform({ ...input, bottomInset: 0 }, cache)!
+  assert.equal(noInset.y, plain.y)
+})
