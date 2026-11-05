@@ -19,6 +19,8 @@ import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
 import { shouldCommitFrame } from './simulation/ui-throttle'
 import { buildForceConfig, type ForceConfig } from './simulation/force-config'
+import { onViewAspectChange } from '@/lib/view-aspect'
+import { clusterOutwardAngle } from './simulation/main-anchors'
 import { ALL_SESSIONS_ID } from '@/lib/all-sessions'
 import { frameDriver, wakeFrames, PERF_STATS_ENABLED, type FrameMode } from '@/lib/frame-driver'
 
@@ -127,6 +129,14 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     wakeFrames()
   }, [])
 
+  // Viewport aspect bucket changed: re-pick the All-view grid shape (no-op for one session)
+  useEffect(() => onViewAspectChange(() => {
+    const st = frameRef.current
+    let mains = 0
+    for (const a of st.agents.values()) if (a.isMain && ++mains > 1) break
+    if (mains > 1) syncForceSimulation(st.agents, st.edges)
+  }), [syncForceSimulation])
+
   // ─── Tool slot placement ─────────────────────────────────────────────────
   const findToolSlot = useCallback((
     agent: Agent, agents: Map<string, Agent>,
@@ -154,6 +164,10 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
         outAngle = Math.atan2(agent.y - parent.y, agent.x - parent.x)
       }
     }
+    // All view: face away from the other sessions' clusters. Mains always do;
+    // a sub-agent keeps its parent-relative direction unless that points into them.
+    const outward = clusterOutwardAngle(agent, agents.values())
+    if (outward !== null && (!agent.parentId || Math.cos(outAngle - outward) < 0.3)) outAngle = outward
 
     for (let ring = 1; ring <= TOOL_SLOT.maxRings; ring++) {
       const dist = TOOL_SLOT.baseDistance + ring * TOOL_SLOT.ringIncrement
