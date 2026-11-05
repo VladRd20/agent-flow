@@ -20,6 +20,63 @@ import { createLogger } from './logger'
 
 const log = createLogger('SubagentWatcher')
 
+/** Minimal transcript-line shape needed to recognise how a subagent's run ends. */
+interface TurnEntry {
+  type?: string
+  toolEndsTurn?: boolean
+  message?: { stop_reason?: string | null; content?: unknown }
+}
+
+/** Conversation turns; attachment/system/progress lines are bookkeeping, not activity. */
+function isTurnEntry(e: TurnEntry): boolean {
+  return e.type === 'user' || e.type === 'assistant'
+}
+
+/**
+ * An entry that ends a subagent's run: a Workflow agent's StructuredOutput
+ * result (written with `toolEndsTurn: true`), or an assistant turn that stopped
+ * with `end_turn`. Unmatched tool_use blocks are NOT a usable "still running"
+ * signal on their own: calls denied by PreToolUse hooks never get a tool_result
+ * line, so a finished agent can be left with many of them.
+ */
+export function isFinishingEntry(e: TurnEntry): boolean {
+  return e.toolEndsTurn === true || (e.type === 'assistant' && e.message?.stop_reason === 'end_turn')
+}
+
+/** At attach time, a transcript untouched this long is treated as finished even
+ *  without a finishing entry (killed/crashed runs). */
+export const STALE_SUBAGENT_MS = 10 * 60 * 1000
+
+function parseTurnEntries(lines: readonly string[]): TurnEntry[] {
+  const out: TurnEntry[] = []
+  for (const line of lines) {
+    try {
+      const e = JSON.parse(line) as TurnEntry
+      if (e && typeof e === 'object' && isTurnEntry(e)) out.push(e)
+    } catch { /* partial or non-JSON line */ }
+  }
+  return out
+}
+
+/** Mark a subagent finished: emit return + complete, and drop its pending tool
+ *  calls so permission detection stops treating hook-denied calls as waiting. */
+function markSubagentFinished(delegate: SubagentWatcherDelegate, state: SubagentState, sessionId: string): void {
+  state.completed = true
+  state.pendingToolCalls.clear()
+  if (state.permissionTimer) { clearTimeout(state.permissionTimer); state.permissionTimer = null }
+  state.permissionEmitted = false
+  delegate.emit({
+    time: delegate.elapsed(sessionId),
+    type: 'subagent_return',
+    payload: { child: state.agentName, parent: ORCHESTRATOR_NAME, summary: '' },
+  }, sessionId)
+  delegate.emit({
+    time: delegate.elapsed(sessionId),
+    type: 'agent_complete',
+    payload: { name: state.agentName },
+  }, sessionId)
+}
+
 export interface SubagentWatcherDelegate extends PermissionDetectionDelegate {
   getSession(sessionId: string): WatchedSession | undefined
   resetInactivityTimer(sessionId: string): void
@@ -222,14 +279,18 @@ function startWatchingSubagentFile(
   // Pre-scan existing content for dedup IDs and determine if the subagent
   // is still active (has unmatched tool_use blocks = pending work).
   const pendingToolUseIds = new Set<string>()
+  let lastTurn: TurnEntry | null = null
+  let stale = false
   try {
     const stat = fs.statSync(filePath)
+    stale = Date.now() - stat.mtimeMs > STALE_SUBAGENT_MS
     if (stat.size > 0) {
       const content = fs.readFileSync(filePath, 'utf-8')
       for (const line of content.split(/\r?\n/)) {
         if (!line.trim()) continue
         try {
           const raw: unknown = JSON.parse(line.trim())
+          if (raw && typeof raw === 'object' && isTurnEntry(raw as TurnEntry)) lastTurn = raw as TurnEntry
           const entry = raw as { message?: { content?: Array<{ type: string; id?: string; tool_use_id?: string }> } }
           if (raw && typeof raw === 'object' && entry.message && Array.isArray(entry.message.content)) {
             for (const block of entry.message.content) {
@@ -247,13 +308,21 @@ function startWatchingSubagentFile(
     }
   } catch (err) { log.debug('Subagent initial read failed:', err) }
 
-  // Only emit spawn for subagents that are still active (have pending work)
-  // AND haven't already been spawned by the transcript parser.
-  const alreadySpawned = session.spawnedSubagents.has(agentName)
+  // Already finished at attach time: never show it as running. Marked completed
+  // (and spawn-emitted) so that if it is written again later, the resume path
+  // in readSubagentNewLines re-spawns it.
+  if ((lastTurn && isFinishingEntry(lastTurn)) || (stale && pendingToolUseIds.size > 0)) {
+    state.spawnEmitted = true
+    state.completed = true
+  } else {
+    // Only emit spawn for subagents that are still active (have pending work)
+    // AND haven't already been spawned by the transcript parser.
+    const alreadySpawned = session.spawnedSubagents.has(agentName)
   state.spawnEmitted = pendingToolUseIds.size > 0 || alreadySpawned
-  if (pendingToolUseIds.size > 0 && !alreadySpawned) {
-    session.spawnedSubagents.add(agentName)
-    emitSubagentSpawn(delegate, ORCHESTRATOR_NAME, agentName, agentName, sessionId)
+    if (pendingToolUseIds.size > 0 && !alreadySpawned) {
+      session.spawnedSubagents.add(agentName)
+      emitSubagentSpawn(delegate, ORCHESTRATOR_NAME, agentName, agentName, sessionId)
+    }
   }
 
   // Watch for new content
@@ -299,16 +368,33 @@ export function readSubagentNewLines(
     }
   }
 
-  // Node was completed (e.g. by its Workflow tool_result) but the transcript is
-  // being written again — a resumed run. Revive it, mirroring how the
-  // orchestrator node is resurrected in resetInactivityTimer.
+  const turns = parseTurnEntries(result.lines)
+
+  // Node was completed (finishing entry, its Workflow/Task result, or found
+  // finished at attach time) but the transcript is being written again: a
+  // resumed run. Revive it, mirroring how the orchestrator node is resurrected
+  // in resetInactivityTimer. Bookkeeping lines (attachments) or a late-arriving
+  // finishing entry alone are not a resume.
   if (state.completed) {
+    if (!turns.some(t => !isFinishingEntry(t))) {
+      delegate.resetInactivityTimer(sessionId)
+      return
+    }
     state.completed = false
     emitSubagentSpawn(delegate, ORCHESTRATOR_NAME, state.agentName, state.agentName, sessionId, true)
   }
 
   for (const line of result.lines) {
     parser.processTranscriptLine(line, state.agentName, state.pendingToolCalls, state.seenToolUseIds, sessionId)
+  }
+
+  // The run ended in this batch: complete the node now instead of waiting for a
+  // Workflow/Task result that may never match (see isFinishingEntry).
+  const lastTurn = turns[turns.length - 1]
+  if (lastTurn && isFinishingEntry(lastTurn)) {
+    markSubagentFinished(delegate, state, sessionId)
+    delegate.resetInactivityTimer(sessionId)
+    return
   }
 
   // Permission detection for subagent tools

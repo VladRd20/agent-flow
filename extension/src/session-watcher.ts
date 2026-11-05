@@ -122,7 +122,8 @@ export class SessionWatcher implements AgentSessionWatcher {
       }, sessionId)
 
       for (const [, sub] of session.subagentWatchers) {
-        if (session.spawnedSubagents.has(sub.agentName)) {
+        // Finished subagents are not replayed as running to a newly connected webview
+        if (session.spawnedSubagents.has(sub.agentName) && !sub.completed) {
           const model = session.modelDetectedAgents.get(sub.agentName)
           this.emit({ time: 0, type: 'subagent_dispatch', payload: { parent: ORCHESTRATOR_NAME, child: sub.agentName, task: sub.agentName } }, sessionId)
           this.emit({ time: 0, type: 'agent_spawn', payload: { name: sub.agentName, parent: ORCHESTRATOR_NAME, task: sub.agentName, agentType: deriveAgentType(false), ...(model ? { model } : {}) } }, sessionId)
