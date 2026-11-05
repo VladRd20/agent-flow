@@ -152,7 +152,8 @@ export class VisualizerPanel implements vscode.Disposable {
 <html lang="en" style="height:100%; margin:0; padding:0;">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="dark">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none';
       frame-src http://localhost:${port} https://localhost:${port};
@@ -249,7 +250,8 @@ export class VisualizerPanel implements vscode.Disposable {
 <html lang="en" class="dark" style="height:100%; margin:0; padding:0;">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="dark">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none';
       style-src ${webview.cspSource} 'unsafe-inline';
