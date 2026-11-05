@@ -299,7 +299,7 @@ function resetInactivityTimer(sessionId: string) {
   }, INACTIVITY_TIMEOUT_MS)
 }
 
-function watchSession(sessionId: string, filePath: string) {
+async function watchSession(sessionId: string, filePath: string): Promise<void> {
   const defaultLabel = `Session ${sessionId.slice(0, SESSION_ID_DISPLAY)}`
   const session: WatchedSession = {
     sessionId, filePath,
@@ -325,7 +325,11 @@ function watchSession(sessionId: string, filePath: string) {
   sessions.set(sessionId, session)
 
   const stat = fs.statSync(filePath)
-  const catchUpEntries = parser.prescanExistingContent(filePath, stat.size, session)
+  // Async + chunked so a huge transcript does not freeze SSE/timers; live tailing starts after the scan.
+  const catchUpEntries = await parser.prescanExistingContentAsync(filePath, stat.size, session, {
+    isCancelled: () => sessions.get(sessionId) !== session,
+  })
+  if (sessions.get(sessionId) !== session) return // pruned mid-scan
   session.fileSize = stat.size
   parser.extractSessionLabel(catchUpEntries, session)
 
@@ -460,7 +464,7 @@ function scanForActiveSessions(workspace: string) {
 
         const ageSeconds = (Date.now() - newestMtime) / 1000
         if (ageSeconds <= ACTIVE_SESSION_AGE_S && !sessions.has(sessionId)) {
-          watchSession(sessionId, filePath)
+          watchSession(sessionId, filePath).catch(err => log(`[session] watch failed: ${err}`))
         }
       }
     } catch {}

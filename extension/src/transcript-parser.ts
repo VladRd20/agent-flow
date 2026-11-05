@@ -11,7 +11,7 @@ import {
   TranscriptEntry, ToolUseBlock, ToolResultBlock,
   emitSubagentSpawn,
 } from './protocol'
-import { iterateFileLines } from './fs-utils'
+import { iterateFileLines, iterateFileLinesAsync } from './fs-utils'
 import {
   PREVIEW_MAX, ARGS_MAX, RESULT_MAX, MESSAGE_MAX,
   SESSION_LABEL_MAX, SESSION_LABEL_TRUNCATED,
@@ -29,6 +29,14 @@ import { createLogger } from './logger'
 import { recordContextUsage, resetContextForCompaction } from './context-usage'
 
 const log = createLogger('TranscriptParser')
+
+/** Lines scanned between event-loop yields during the async prescan. */
+const PRESCAN_YIELD_LINES = 500
+
+interface PrescanState {
+  catchUpEntries: TranscriptEntry[]
+  pendingSubagentSpawns: Map<string, { childName: string; task: string }>
+}
 
 export interface TranscriptParserDelegate {
   emit(event: AgentEvent, sessionId?: string): void
@@ -623,148 +631,197 @@ export class TranscriptParser {
    */
   prescanExistingContent(filePath: string, size: number, session: WatchedSession): TranscriptEntry[] {
     if (size === 0) { return [] }
-    const catchUpEntries: TranscriptEntry[] = []
-    // Task/Agent tool_use blocks seen during this scan whose matching
-    // tool_result hasn't been seen yet (still running as of catch-up time).
-    // Only entries still pending at the end of the scan get a real spawn
-    // emitted below — a fresh relay process has never shown these to any
-    // client, so marking them "already spawned" here (as this used to do
-    // unconditionally) permanently hid still-running subagents from the UI
-    // after every relay restart, even though their tool_call_start events
-    // kept flowing in fine via inline progress / the subagent file watcher.
-    const pendingSubagentSpawns = new Map<string, { childName: string; task: string }>()
+    const state = this.newPrescanState()
     try {
       // Read only up to `size` bytes — the file may have grown since stat.
       // Reading beyond would add tool_use IDs to the dedup set that haven't
       // been accounted for in fileSize, causing readNewLines to silently skip them.
       for (const line of iterateFileLines(filePath, size)) {
-        if (!line.trim()) { continue }
-        try {
-          const entry = JSON.parse(line.trim()) as TranscriptEntry & { toolUseResult?: unknown }
-          // Track background subagents still running at attach time, so the
-          // <task-notification> that arrives later can complete them.
-          const queuedText = queuedCommandText(entry as unknown as Record<string, unknown>)
-          if ((entry.type === 'user' && entry.message) || queuedText !== undefined) {
-            const notification = parseTaskNotification(queuedText ?? userContentText(entry.message.content))
-            if (notification) {
-              this.backgroundSubagents.delete(notification.toolUseId)
-              // The background agent finished within the scanned history: it is
-              // done, so it must not be re-spawned as still running.
-              const finished = pendingSubagentSpawns.get(notification.toolUseId)
-              if (finished) {
-                session.spawnedSubagents.add(finished.childName)
-                pendingSubagentSpawns.delete(notification.toolUseId)
-              }
-            }
-          }
-          // Build dedup sets for tool_use blocks and messages + accumulate token counts
-          const isUser = entry.message?.role === 'user' || entry.message?.role === 'human'
-          if (entry.message && Array.isArray(entry.message.content)) {
-            for (const block of entry.message.content) {
-              if (block.type === 'tool_use' && (block as ToolUseBlock).id) {
-                const toolBlock = block as ToolUseBlock
-                session.seenToolUseIds.add(toolBlock.id)
-                // Track subagent names so startWatchingSubagentFile assigns correct names
-                // and handleToolResult can resolve the child name on completion
-                if (toolBlock.name === 'Agent' || toolBlock.name === 'Task') {
-                  const childName = resolveSubagentChildName(toolBlock.input)
-                  this.subagentChildNames.set(toolBlock.id, childName)
-                  // Not marked spawnedSubagents yet — only once we know (via a
-                  // matching tool_result below, or by staying unmatched to the
-                  // end of this scan) whether it already completed in history
-                  // or is still running and needs a fresh spawn emitted.
-                  pendingSubagentSpawns.set(toolBlock.id, { childName, task: summarizeInput(toolBlock.name, toolBlock.input) })
-                }
-                // Track pending tool calls so handleToolResult works after reconnect
-                const args = summarizeInput(toolBlock.name, toolBlock.input)
-                const rawPath = toolBlock.input.file_path || toolBlock.input.path
-                const filePath = typeof rawPath === 'string' ? rawPath : undefined
-                session.pendingToolCalls.set(toolBlock.id, { name: toolBlock.name, args, filePath, startTime: Date.now() })
-              } else if (block.type === 'tool_result') {
-                const resultBlock = block as ToolResultBlock
-                const childName = resultBlock.tool_use_id ? this.subagentChildNames.get(resultBlock.tool_use_id) : undefined
-                const isAsyncLaunch = parseAgentToolUseResult(entry.toolUseResult).isAsync
-                if (childName && isAsyncLaunch) {
-                  this.backgroundSubagents.set(resultBlock.tool_use_id, { childName, parent: ORCHESTRATOR_NAME, sessionId: session.sessionId })
-                }
-                // Clear matched pending tool call
-                if (resultBlock.tool_use_id) {
-                  session.pendingToolCalls.delete(resultBlock.tool_use_id)
-                  // Task/Agent completed within the pre-scanned history — mark
-                  // its name known so no live path re-spawns a node for it.
-                  // A background (async) launch's tool_result only confirms the
-                  // launch — it stays pending until its <task-notification>.
-                  const pendingSpawn = isAsyncLaunch ? undefined : pendingSubagentSpawns.get(resultBlock.tool_use_id)
-                  if (pendingSpawn) {
-                    session.spawnedSubagents.add(pendingSpawn.childName)
-                    pendingSubagentSpawns.delete(resultBlock.tool_use_id)
-                  }
-                }
-                // Accumulate tool result tokens
-                session.contextBreakdown.toolResults += estimateTokensFromContent(resultBlock.content)
-              } else if (block.type === 'text' && 'text' in block) {
-                const text = safeText(block)
-                if (text) {
-                  const emitRole = isUser ? 'user' : 'assistant'
-                  const hashKey = entry.uuid ? `${emitRole}:${entry.uuid}` : `${emitRole}:${text.slice(0, HASH_PREFIX_MAX)}`
-                  session.seenMessageHashes.add(hashKey)
-                  // Accumulate text tokens
-                  if (isUser) { session.contextBreakdown.userMessages += estimateTokensFromText(text) }
-                  else { session.contextBreakdown.reasoning += estimateTokensFromText(text) }
-                }
-              } else if (block.type === 'thinking' && 'thinking' in block) {
-                const thinking = safeThinking(block)
-                const redactedSig = thinking ? null : redactedThinkingSignature(block)
-                if (thinking || redactedSig) {
-                  session.seenMessageHashes.add(thinkingHashKey(entry.uuid, thinking || redactedSig || ''))
-                  if (thinking) { session.contextBreakdown.reasoning += estimateTokensFromText(thinking) }
-                }
-              }
-            }
-          } else if (entry.type === 'user' && typeof entry.message?.content === 'string') {
-            const text = entry.message.content.trim()
-            if (text) {
-              const hashKey = entry.uuid ? `user:${entry.uuid}` : `user:${text.slice(0, HASH_PREFIX_MAX)}`
-              session.seenMessageHashes.add(hashKey)
-              session.contextBreakdown.userMessages += estimateTokensFromText(text)
-            }
-          }
-          // Authoritative context size = latest assistant usage; compaction resets.
-          if (entry.type === 'assistant') {
-            recordContextUsage(session, ORCHESTRATOR_NAME, (entry.message as { usage?: unknown } | undefined)?.usage)
-          } else if ((entry as { type?: string }).type === 'system' && (entry as { subtype?: string }).subtype === 'compact_boundary') {
-            resetContextForCompaction(session, ORCHESTRATOR_NAME)
-          }
-          // Extract model from first assistant message
-          if (entry.type === 'assistant' && isRealModelId(entry.message?.model) && !session.model) {
-            session.model = entry.message.model
-          }
-          // Collect emittable entries (user and assistant turns)
-          if (entry.type === 'user' || entry.type === 'assistant') {
-            catchUpEntries.push(entry)
-          }
-        } catch (err) { log.debug('Skipping unparseable transcript line:', err) }
+        this.prescanLine(line, session, state)
       }
-      log.info(`Pre-scanned ${session.seenToolUseIds.size} existing tool_use IDs, ${catchUpEntries.length} entries total`)
-
-      // Anything still in pendingSubagentSpawns never got a matching
-      // tool_result in the pre-scanned history — it was actively running at
-      // catch-up time. This process has never shown it to a client, so it
-      // needs a real spawn — queued here rather than emitted immediately
-      // since the session's own orchestrator agent_spawn hasn't broadcast
-      // yet at this point in the caller (watchSession); see
-      // emitPendingSubagentSpawns(), called once that has happened.
-      for (const { childName, task } of pendingSubagentSpawns.values()) {
-        if (session.spawnedSubagents.has(childName)) continue
-        session.spawnedSubagents.add(childName)
-        session.pendingCatchUpSpawns.push({ childName, task })
-      }
-
-      return catchUpEntries
+      return this.finishPrescan(session, state)
     } catch (err) {
       log.error('Pre-scan failed:', err)
       return []
     }
+  }
+
+  /**
+   * Non-blocking twin of prescanExistingContent: identical results, but reads
+   * asynchronously and yields to the event loop every `yieldEveryLines` lines,
+   * so scanning a huge transcript can't freeze the process (SSE, timers, other
+   * sessions). `isCancelled` is polled after each yield; when it returns true
+   * the scan stops and resolves to [] (session disposed mid-scan).
+   */
+  async prescanExistingContentAsync(
+    filePath: string,
+    size: number,
+    session: WatchedSession,
+    opts: { yieldEveryLines?: number; isCancelled?: () => boolean } = {},
+  ): Promise<TranscriptEntry[]> {
+    if (size === 0) { return [] }
+    const yieldEvery = Math.max(1, opts.yieldEveryLines ?? PRESCAN_YIELD_LINES)
+    const state = this.newPrescanState()
+    try {
+      let n = 0
+      for await (const line of iterateFileLinesAsync(filePath, size)) {
+        this.prescanLine(line, session, state)
+        if (++n % yieldEvery === 0) {
+          await new Promise<void>(resolve => setImmediate(resolve))
+          if (opts.isCancelled?.()) { return [] }
+        }
+      }
+      if (opts.isCancelled?.()) { return [] }
+      return this.finishPrescan(session, state)
+    } catch (err) {
+      log.error('Pre-scan failed:', err)
+      return []
+    }
+  }
+
+  private newPrescanState(): PrescanState {
+    return {
+      catchUpEntries: [],
+      // Task/Agent tool_use blocks seen during this scan whose matching
+      // tool_result hasn't been seen yet (still running as of catch-up time).
+      // Only entries still pending at the end of the scan get a real spawn
+      // emitted — a fresh relay process has never shown these to any
+      // client, so marking them "already spawned" here (as this used to do
+      // unconditionally) permanently hid still-running subagents from the UI
+      // after every relay restart, even though their tool_call_start events
+      // kept flowing in fine via inline progress / the subagent file watcher.
+      pendingSubagentSpawns: new Map(),
+    }
+  }
+
+  private prescanLine(line: string, session: WatchedSession, state: PrescanState): void {
+    const { catchUpEntries, pendingSubagentSpawns } = state
+    if (!line.trim()) { return }
+    try {
+      const entry = JSON.parse(line.trim()) as TranscriptEntry & { toolUseResult?: unknown }
+      // Track background subagents still running at attach time, so the
+      // <task-notification> that arrives later can complete them.
+      const queuedText = queuedCommandText(entry as unknown as Record<string, unknown>)
+      if ((entry.type === 'user' && entry.message) || queuedText !== undefined) {
+        const notification = parseTaskNotification(queuedText ?? userContentText(entry.message.content))
+        if (notification) {
+          this.backgroundSubagents.delete(notification.toolUseId)
+          // The background agent finished within the scanned history: it is
+          // done, so it must not be re-spawned as still running.
+          const finished = pendingSubagentSpawns.get(notification.toolUseId)
+          if (finished) {
+            session.spawnedSubagents.add(finished.childName)
+            pendingSubagentSpawns.delete(notification.toolUseId)
+          }
+        }
+      }
+      // Build dedup sets for tool_use blocks and messages + accumulate token counts
+      const isUser = entry.message?.role === 'user' || entry.message?.role === 'human'
+      if (entry.message && Array.isArray(entry.message.content)) {
+        for (const block of entry.message.content) {
+          if (block.type === 'tool_use' && (block as ToolUseBlock).id) {
+            const toolBlock = block as ToolUseBlock
+            session.seenToolUseIds.add(toolBlock.id)
+            // Track subagent names so startWatchingSubagentFile assigns correct names
+            // and handleToolResult can resolve the child name on completion
+            if (toolBlock.name === 'Agent' || toolBlock.name === 'Task') {
+              const childName = resolveSubagentChildName(toolBlock.input)
+              this.subagentChildNames.set(toolBlock.id, childName)
+              // Not marked spawnedSubagents yet — only once we know (via a
+              // matching tool_result below, or by staying unmatched to the
+              // end of this scan) whether it already completed in history
+              // or is still running and needs a fresh spawn emitted.
+              pendingSubagentSpawns.set(toolBlock.id, { childName, task: summarizeInput(toolBlock.name, toolBlock.input) })
+            }
+            // Track pending tool calls so handleToolResult works after reconnect
+            const args = summarizeInput(toolBlock.name, toolBlock.input)
+            const rawPath = toolBlock.input.file_path || toolBlock.input.path
+            const filePath = typeof rawPath === 'string' ? rawPath : undefined
+            session.pendingToolCalls.set(toolBlock.id, { name: toolBlock.name, args, filePath, startTime: Date.now() })
+          } else if (block.type === 'tool_result') {
+            const resultBlock = block as ToolResultBlock
+            const childName = resultBlock.tool_use_id ? this.subagentChildNames.get(resultBlock.tool_use_id) : undefined
+            const isAsyncLaunch = parseAgentToolUseResult(entry.toolUseResult).isAsync
+            if (childName && isAsyncLaunch) {
+              this.backgroundSubagents.set(resultBlock.tool_use_id, { childName, parent: ORCHESTRATOR_NAME, sessionId: session.sessionId })
+            }
+            // Clear matched pending tool call
+            if (resultBlock.tool_use_id) {
+              session.pendingToolCalls.delete(resultBlock.tool_use_id)
+              // Task/Agent completed within the pre-scanned history — mark
+              // its name known so no live path re-spawns a node for it.
+              // A background (async) launch's tool_result only confirms the
+              // launch — it stays pending until its <task-notification>.
+              const pendingSpawn = isAsyncLaunch ? undefined : pendingSubagentSpawns.get(resultBlock.tool_use_id)
+              if (pendingSpawn) {
+                session.spawnedSubagents.add(pendingSpawn.childName)
+                pendingSubagentSpawns.delete(resultBlock.tool_use_id)
+              }
+            }
+            // Accumulate tool result tokens
+            session.contextBreakdown.toolResults += estimateTokensFromContent(resultBlock.content)
+          } else if (block.type === 'text' && 'text' in block) {
+            const text = safeText(block)
+            if (text) {
+              const emitRole = isUser ? 'user' : 'assistant'
+              const hashKey = entry.uuid ? `${emitRole}:${entry.uuid}` : `${emitRole}:${text.slice(0, HASH_PREFIX_MAX)}`
+              session.seenMessageHashes.add(hashKey)
+              // Accumulate text tokens
+              if (isUser) { session.contextBreakdown.userMessages += estimateTokensFromText(text) }
+              else { session.contextBreakdown.reasoning += estimateTokensFromText(text) }
+            }
+          } else if (block.type === 'thinking' && 'thinking' in block) {
+            const thinking = safeThinking(block)
+            const redactedSig = thinking ? null : redactedThinkingSignature(block)
+            if (thinking || redactedSig) {
+              session.seenMessageHashes.add(thinkingHashKey(entry.uuid, thinking || redactedSig || ''))
+              if (thinking) { session.contextBreakdown.reasoning += estimateTokensFromText(thinking) }
+            }
+          }
+        }
+      } else if (entry.type === 'user' && typeof entry.message?.content === 'string') {
+        const text = entry.message.content.trim()
+        if (text) {
+          const hashKey = entry.uuid ? `user:${entry.uuid}` : `user:${text.slice(0, HASH_PREFIX_MAX)}`
+          session.seenMessageHashes.add(hashKey)
+          session.contextBreakdown.userMessages += estimateTokensFromText(text)
+        }
+      }
+      // Authoritative context size = latest assistant usage; compaction resets.
+      if (entry.type === 'assistant') {
+        recordContextUsage(session, ORCHESTRATOR_NAME, (entry.message as { usage?: unknown } | undefined)?.usage)
+      } else if ((entry as { type?: string }).type === 'system' && (entry as { subtype?: string }).subtype === 'compact_boundary') {
+        resetContextForCompaction(session, ORCHESTRATOR_NAME)
+      }
+      // Extract model from first assistant message
+      if (entry.type === 'assistant' && isRealModelId(entry.message?.model) && !session.model) {
+        session.model = entry.message.model
+      }
+      // Collect emittable entries (user and assistant turns)
+      if (entry.type === 'user' || entry.type === 'assistant') {
+        catchUpEntries.push(entry)
+      }
+    } catch (err) { log.debug('Skipping unparseable transcript line:', err) }
+  }
+
+  private finishPrescan(session: WatchedSession, state: PrescanState): TranscriptEntry[] {
+    const { catchUpEntries, pendingSubagentSpawns } = state
+    log.info(`Pre-scanned ${session.seenToolUseIds.size} existing tool_use IDs, ${catchUpEntries.length} entries total`)
+
+    // Anything still in pendingSubagentSpawns never got a matching
+    // tool_result in the pre-scanned history — it was actively running at
+    // catch-up time. This process has never shown it to a client, so it
+    // needs a real spawn — queued here rather than emitted immediately
+    // since the session's own orchestrator agent_spawn hasn't broadcast
+    // yet at this point in the caller (watchSession); see
+    // emitPendingSubagentSpawns(), called once that has happened.
+    for (const { childName, task } of pendingSubagentSpawns.values()) {
+      if (session.spawnedSubagents.has(childName)) continue
+      session.spawnedSubagents.add(childName)
+      session.pendingCatchUpSpawns.push({ childName, task })
+    }
+
+    return catchUpEntries
   }
 
   /** Emit message events for pre-existing transcript entries (catch-up on session detection).

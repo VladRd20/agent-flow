@@ -46,6 +46,34 @@ export function* iterateFileLines(filePath: string, size: number, chunkBytes = 4
 }
 
 /**
+ * Async twin of iterateFileLines: same line semantics (first `size` bytes,
+ * chunks cut at newline bytes, CR stripped) but reads with fs.promises so the
+ * event loop keeps turning between chunks.
+ */
+export async function* iterateFileLinesAsync(filePath: string, size: number, chunkBytes = 1024 * 1024): AsyncGenerator<string> {
+  const fh = await fs.promises.open(filePath, 'r')
+  try {
+    const buf = Buffer.alloc(chunkBytes)
+    let pos = 0
+    let carry: Buffer = Buffer.alloc(0)
+    while (pos < size) {
+      const want = Math.min(chunkBytes, size - pos)
+      const { bytesRead: n } = await fh.read(buf, 0, want, pos)
+      if (n <= 0) break
+      pos += n
+      const data = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : Buffer.from(buf.subarray(0, n))
+      const lastNl = data.lastIndexOf(0x0a)
+      if (lastNl === -1) { carry = data; continue }
+      carry = Buffer.from(data.subarray(lastNl + 1))
+      for (const line of data.toString('utf-8', 0, lastNl).split(/\n/)) yield line.endsWith('\r') ? line.slice(0, -1) : line
+    }
+    if (carry.length) { const tail = carry.toString('utf-8'); yield tail.endsWith('\r') ? tail.slice(0, -1) : tail }
+  } finally {
+    await fh.close()
+  }
+}
+
+/**
  * Read new lines appended to a file since `lastSize` bytes.
  * Returns the new lines, updated file size, and any trailing partial line
  * (bytes past the last newline) as `tail` — pass it back on the next call as

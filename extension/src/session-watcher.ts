@@ -374,7 +374,7 @@ export class SessionWatcher implements AgentSessionWatcher {
       for (const af of activeFiles) {
         if (!this.sessions.has(af.sessionId)) {
           log.info(`Active session found: ${af.filePath}`)
-          this.watchSession(af.sessionId, af.filePath)
+          void this.watchSession(af.sessionId, af.filePath).catch(err => log.error("watchSession failed:", err))
         } else {
           // Already watching — scan for subagents
           scanSubagentsDir(this.selfDelegate, this.parser, af.sessionId)
@@ -385,7 +385,7 @@ export class SessionWatcher implements AgentSessionWatcher {
     }
   }
 
-  private watchSession(sessionId: string, filePath: string): void {
+  private async watchSession(sessionId: string, filePath: string): Promise<void> {
     const defaultLabel = `Session ${sessionId.slice(0, SESSION_ID_DISPLAY)}`
     const session: WatchedSession = {
       sessionId,
@@ -421,7 +421,13 @@ export class SessionWatcher implements AgentSessionWatcher {
     const stat = fs.statSync(filePath)
 
     // Pre-scan existing content for dedup IDs + collect recent entries for catch-up
-    const catchUpEntries = this.parser.prescanExistingContent(filePath, stat.size, session)
+    // Async + chunked: a multi-hundred-MB transcript must not freeze the event loop.
+    // Live tailing (fs.watch/poll) only starts below, after the scan, and session.fileSize
+    // is the size the scan covered, so lines appended meanwhile are read afterwards, in order.
+    const catchUpEntries = await this.parser.prescanExistingContentAsync(filePath, stat.size, session, {
+      isCancelled: () => this.sessions.get(sessionId) !== session,
+    })
+    if (this.sessions.get(sessionId) !== session) { return } // disposed mid-scan
 
     // Start from current end — only process NEW events going forward
     session.fileSize = stat.size
