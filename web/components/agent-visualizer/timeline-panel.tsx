@@ -1,8 +1,9 @@
 'use client'
 
-import { useRef, useEffect, useMemo } from 'react'
+import { useRef, useEffect, useMemo, useCallback } from 'react'
 import { TimelineEntry, Z } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
+import { formatTimelineModels } from '@/lib/timeline-models'
 import { PanelHeader, SlidingPanel } from './shared-ui'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 
@@ -19,6 +20,7 @@ const ROW_HEIGHT = 22
 const HEADER_HEIGHT = 20
 const LABEL_WIDTH = 90
 const FONT = '9px monospace'
+const MODEL_FONT = '8px monospace'
 
 // ─── Legend (static DOM — no perf cost) ─────────────────────────────────────
 
@@ -31,6 +33,20 @@ const LEGEND_ITEMS = [
 ]
 
 // ─── Canvas-based timeline rendering ────────────────────────────────────────
+
+/** Truncate text with '..' so it fits in maxWidth at the current font. */
+function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text
+  let end = text.length
+  while (end > 1 && ctx.measureText(text.slice(0, end) + '..').width > maxWidth) end--
+  return text.slice(0, end) + '..'
+}
+
+/** Hover text for a row: the full agent name and every model it used. */
+function rowTooltip(entry: TimelineEntry): string {
+  const models = formatTimelineModels(entry.models)
+  return models ? `${entry.agentName}\n${models}` : entry.agentName
+}
 
 function drawTimeline(
   ctx: CanvasRenderingContext2D,
@@ -86,11 +102,20 @@ function drawTimeline(
     const entry = entries[i]
     const y = HEADER_HEIGHT + i * ROW_HEIGHT
 
-    // Agent label
+    // Agent label, with its models underneath when known
     ctx.textAlign = 'right'
     ctx.fillStyle = COLORS.textDim
     const name = entry.agentName.length > 12 ? entry.agentName.slice(0, 12) + '..' : entry.agentName
-    ctx.fillText(name, LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 + 3)
+    const models = formatTimelineModels(entry.models)
+    if (models) {
+      ctx.fillText(name, LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 - 1)
+      ctx.font = MODEL_FONT
+      ctx.fillStyle = COLORS.textMuted
+      ctx.fillText(fitText(ctx, models, LABEL_WIDTH - 8), LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 + 8)
+      ctx.font = FONT
+    } else {
+      ctx.fillText(name, LABEL_WIDTH - 6, y + ROW_HEIGHT / 2 + 3)
+    }
 
     // Background track
     const trackY = y + 4
@@ -164,6 +189,14 @@ export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }
 
   const canvasHeight = HEADER_HEIGHT + sortedEntries.length * ROW_HEIGHT
 
+  // Labels are truncated to fit; show the full name and models on hover
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const row = Math.floor((e.nativeEvent.offsetY - HEADER_HEIGHT) / ROW_HEIGHT)
+    const entry = row >= 0 ? sortedEntries[row] : undefined
+    const title = entry ? rowTooltip(entry) : ''
+    if (e.currentTarget.title !== title) e.currentTarget.title = title
+  }, [sortedEntries])
+
   useEffect(() => {
     if (!visible) return
     const canvas = canvasRef.current
@@ -207,7 +240,7 @@ export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }
         </PanelHeader>
 
         <div className="overflow-auto" style={{ maxHeight: isMobile ? '50vh' : 300 }}>
-          <canvas ref={canvasRef} style={{ display: 'block' }} />
+          <canvas ref={canvasRef} style={{ display: 'block' }} onMouseMove={handleMouseMove} />
         </div>
 
         {/* Legend (static DOM) */}

@@ -10,8 +10,9 @@ import {
 import type { AgentSessionWatcher, SessionLifecycleEvent } from './session-runtime'
 import { TranscriptParser } from './transcript-parser'
 import { readNewFileLines, foldPathCase } from './fs-utils'
+import { followSession } from './session-relocation'
 import { handlePermissionDetection } from './permission-detection'
-import { scanSubagentsDir, readSubagentNewLines } from './subagent-watcher'
+import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime } from './subagent-watcher'
 import { createLogger } from './logger'
 
 const log = createLogger('SessionWatcher')
@@ -60,6 +61,7 @@ export class SessionWatcher implements AgentSessionWatcher {
     getSession: (sessionId) => this.sessions.get(sessionId),
     fireSessionLifecycle: (event) => this._onSessionLifecycle.fire(event),
     emitContextUpdate: (agentName, session, sessionId) => this.emitContextUpdate(agentName, session, sessionId),
+    scanSubagents: (sessionId) => scanSubagentsDir(this.selfDelegate, this.parser, sessionId),
   })
 
   /** Delegate for subagent/permission modules to call back into this watcher */
@@ -342,19 +344,16 @@ export class SessionWatcher implements AgentSessionWatcher {
             const stat = fs.statSync(filePath)
             let newestMtime = stat.mtimeMs
 
-            // Also check subagent files — a session's main JSONL may be stale
-            // while subagents are still actively writing.
+            // Also check subagent files (recursively — Workflow subagents write
+            // under subagents/workflows/wf_<id>/) — a session's main JSONL may
+            // be stale while subagents are still actively writing. Only walk
+            // the tree when the main file alone doesn't qualify, since subagent
+            // mtimes can only make the session newer.
             const sessionId = path.basename(file, '.jsonl')
-            const subagentsDir = path.join(projectPath, sessionId, 'subagents')
-            try {
-              if (fs.existsSync(subagentsDir)) {
-                for (const subFile of fs.readdirSync(subagentsDir)) {
-                  if (!subFile.endsWith('.jsonl')) continue
-                  const subStat = fs.statSync(path.join(subagentsDir, subFile))
-                  if (subStat.mtimeMs > newestMtime) newestMtime = subStat.mtimeMs
-                }
-              }
-            } catch { /* expected if subagents dir doesn't exist yet */ }
+            if ((Date.now() - newestMtime) / 1000 > ACTIVE_SESSION_AGE_S) {
+              const subMtime = newestSubagentMtime(path.join(projectPath, sessionId, 'subagents'))
+              if (subMtime > newestMtime) newestMtime = subMtime
+            }
 
             const ageSeconds = (Date.now() - newestMtime) / 1000
             if (ageSeconds <= ACTIVE_SESSION_AGE_S) {
@@ -456,15 +455,22 @@ export class SessionWatcher implements AgentSessionWatcher {
     this.parser.emitCatchUpEntries(catchUpEntries, session, sessionId)
 
     // Watch for new content
-    session.fileWatcher = fs.watch(filePath, (eventType) => {
+    const watchTranscript = () => fs.watch(session.filePath, (eventType) => {
       if (eventType === 'change') {
         this.readNewLines(sessionId)
       }
     })
+    session.fileWatcher = watchTranscript()
 
     // Poll fallback — fs.watch on macOS can silently stop firing events
     // for long-lived watchers. This ensures we still detect new content.
     session.pollTimer = setInterval(() => {
+      // Entering a worktree moves the transcript to another project folder
+      if (followSession(this.selfDelegate, this.parser, session, CLAUDE_DIR)) {
+        log.info(`Session ${sessionId.slice(0, SESSION_ID_DISPLAY)} moved to ${session.filePath}`)
+        session.fileWatcher?.close()
+        try { session.fileWatcher = watchTranscript() } catch (err) { log.debug('Transcript watch failed:', err) }
+      }
       this.readNewLines(sessionId)
       // Also poll subagent files — fs.watch may not fire after extension restart
       for (const [subPath] of session.subagentWatchers) {
@@ -554,17 +560,8 @@ export class SessionWatcher implements AgentSessionWatcher {
   private newestMtime(filePath: string, sessionId: string): number {
     let newest: number
     try { newest = fs.statSync(filePath).mtimeMs } catch { return Date.now() }
-    const subDir = path.join(path.dirname(filePath), sessionId, 'subagents')
-    try {
-      if (fs.existsSync(subDir)) {
-        for (const f of fs.readdirSync(subDir)) {
-          if (!f.endsWith('.jsonl')) continue
-          const mt = fs.statSync(path.join(subDir, f)).mtimeMs
-          if (mt > newest) newest = mt
-        }
-      }
-    } catch { /* expected if subagents dir doesn't exist yet */ }
-    return newest
+    const subMtime = newestSubagentMtime(path.join(path.dirname(filePath), sessionId, 'subagents'))
+    return subMtime > newest ? subMtime : newest
   }
 
   private elapsed(sessionId?: string): number {
@@ -613,7 +610,7 @@ export class SessionWatcher implements AgentSessionWatcher {
       session.subagentWatchers.clear()
       session.subagentsDirWatcher?.close()
       // Clean up orphaned parser state for this session
-      this.parser.clearSessionState(session.pendingToolCalls.keys())
+      this.parser.clearSessionState(session.pendingToolCalls.keys(), session.sessionId)
     }
     this.sessions.clear()
     if (this.scanInterval) {

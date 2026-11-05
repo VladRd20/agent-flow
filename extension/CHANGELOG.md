@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.9.4
+
+- Fix: sessions that enter a git worktree mid-session no longer freeze (#69)
+  - When a session runs `EnterWorktree`, Claude Code moves its transcript and subagent folder into the worktree's project folder. Agent Flow kept reading the old path, so nothing after the move appeared, including the session's subagents. It now follows the session to its new folder and picks up where it left off
+  - Subagents that older Claude Code versions wrote under the worktree's project folder, while the session's transcript stayed put, are now found too
+
+## 0.9.3
+
+- Security: Agent Flow's local servers now reject requests from web pages (#102)
+  - The standalone app and the dev relay only answer requests addressed to a loopback name (`127.0.0.1`, `localhost` or `[::1]`). Before, a malicious page could use DNS rebinding to read the event stream, which includes commands, file paths and tool output
+  - The hook server applies the same check and also rejects any request that carries an `Origin` header, so a page can no longer POST fake agent events to it. hook.js and Claude Code never send one, so existing hook setups keep working
+- The Timeline panel now shows the model(s) each agent used under its name, and the full agent name and models on hover (#91)
+  - Models are recorded in first-seen order on the agent's timeline row, so the record survives after a subagent finishes and fades out, and after seeking. An agent that switched models (e.g. with `/model`) shows each one
+- Fix: subagents spawned by the Workflow tool now appear (#57, #56)
+  - Newer Claude Code writes their transcripts under `subagents/workflows/wf_<id>/`, which the flat subagent scan never looked in. Discovery is now recursive, writes there keep the session alive, and Workflow subagent nodes complete when the Workflow finishes
+
+## 0.9.2
+
+- Fix: hook setup no longer removes other tools' hooks from `~/.claude/settings.json` (#73)
+  - Setup (`npx agent-flow-app`, `pnpm run setup`, and the VS Code extension) treated any hook URL starting with `http://127.0.0.1:` as its own, so loopback HTTP hooks registered by other tools were deleted on install. On every activation, the VS Code extension also rewrote them into Agent Flow command hooks
+  - Only Agent Flow's own command hook and its legacy bare-origin HTTP hook (`http://127.0.0.1:<port>`) are matched now. This also fixes setup being skipped when another tool's loopback hook made it look already installed
+  - A `settings.json` that can't be parsed is now left untouched with an error, instead of being replaced by a file that only contains hooks
+  - Settings are written via a temp file and rename, so an interrupted write can't truncate them
+- Fix: uninstalling the VS Code extension now removes its hooks. The uninstall script was excluded from the packaged extension, so `vscode:uninstall` had nothing to run and Agent Flow's hooks stayed in `settings.json`
+- Fix: background subagents were marked done the moment they launched (#92)
+  - Claude Code runs `Agent`/`Task` subagents in the background by default. Their immediate tool_result only confirms the launch, but Agent Flow treated it as the finish, so the node completed at once and then looked busy again on its next tool call, or vanished and silently dropped the rest of its events
+  - Background subagents now complete when their `<task-notification>` arrives, including ones launched before Agent Flow attached. Failed or killed runs are marked in the return summary
+- Fix: per-agent model detection (#91)
+  - Subagents get their model from the parent transcript (`resolvedModel` on the launch result), so replayed or branched sessions and subagents whose transcript is never tailed now show a model
+  - Placeholder `<synthetic>` model ids (written on API errors and interrupts) no longer replace the real model
+- Fix: in review mode, the elapsed time, scrubber knob and counters stood still while playback ran through a stretch with no events, and only caught up on the next event or on pause (#90)
+- Fix: session switching and replay races in the web view (#78)
+  - Re-selecting the session already on screen no longer freezes event delivery, and live events no longer skip events that hadn't been replayed yet
+  - Restoring a paused snapshot no longer plays it at 1x under the LIVE badge, and the snapshot cache is cleared on reset
+
 ## 0.9.1
 
 - Fix: Claude Code session discovery on Windows — workspace-to-project-dir matching is now case-insensitive on win32 (#57, part of #4)

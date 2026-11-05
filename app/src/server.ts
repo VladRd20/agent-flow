@@ -10,6 +10,7 @@ import { exec, execFile } from 'child_process'
 import { createRelay } from '../../scripts/relay'
 import { createTelemetryClient } from '../../scripts/telemetry'
 import { serveStatic } from './static'
+import { isLoopbackHost, isAllowedRemoteHost } from '../../extension/src/request-guard'
 
 interface ServerOptions {
   port: number
@@ -31,7 +32,22 @@ export async function startServer(options: ServerOptions) {
 
   const relay = await createRelay({ workspace, verbose: options.verbose, telemetry })
 
+  const loopbackBind = host === '127.0.0.1' || host === 'localhost' || host === '::1'
+  const extraHosts = (process.env.AGENT_FLOW_ALLOWED_HOSTS || '').split(',').filter(Boolean)
+
   const server = http.createServer((req, res) => {
+    // Reject DNS-rebinding requests, which reach the server under a foreign
+    // Host. Loopback binds accept loopback names only; a LAN/WAN bind also
+    // accepts IP literals and AGENT_FLOW_ALLOWED_HOSTS names.
+    const hostOk = loopbackBind
+      ? isLoopbackHost(req.headers.host)
+      : isAllowedRemoteHost(req.headers.host, extraHosts)
+    if (!hostOk) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' })
+      res.end('Forbidden')
+      return
+    }
+
     const pathname = (req.url || '/').split(/[?#]/, 1)[0]
     const isRead = req.method === 'GET' || req.method === 'HEAD'
 

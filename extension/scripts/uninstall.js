@@ -14,10 +14,8 @@ const path = require('path');
 const os = require('os');
 
 const HOOK_COMMAND_MARKER = 'agent-flow/hook.js';
-// Legacy Agent Flow HTTP hooks were always the bare origin
-// ("http://127.0.0.1:<port>", no path). Match that exactly, not as a
-// startsWith prefix, so another tool's loopback hook sharing the host
-// (e.g. "http://127.0.0.1:9229/some-endpoint") isn't removed too.
+// Legacy Agent Flow HTTP hooks used the bare hook server origin. Other tools'
+// loopback hooks (with a path) must be left alone. Mirrors src/hook-entries.ts.
 const LEGACY_HOOK_URL_RE = /^http:\/\/127\.0\.0\.1:\d+\/?$/;
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow');
 const MANIFEST_PATH = path.join(DISCOVERY_DIR, 'workspaces.json');
@@ -37,7 +35,7 @@ function removeHooksFromFile(settingsPath) {
       const filtered = entries.filter(entry => {
         return !entry.hooks?.some(h =>
           h.command?.replace(/\\/g, '/').includes(HOOK_COMMAND_MARKER) ||
-          (h.url !== undefined && LEGACY_HOOK_URL_RE.test(h.url)),
+          (typeof h.url === 'string' && LEGACY_HOOK_URL_RE.test(h.url)),
         );
       });
       if (filtered.length !== entries.length) {

@@ -17,9 +17,7 @@ import { createEmptyState, MAX_EVENT_LOG } from './simulation/types'
 import { processEvent, type ProcessEventContext } from './simulation/process-event'
 import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
-
-/** ms between React state updates — canvas uses frameRef for smooth 60fps */
-const UI_THROTTLE_MS = 250
+import { shouldCommitFrame } from './simulation/ui-throttle'
 
 export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const { useMockData = true, externalEvents, onExternalEventsConsumed, sessionFilter, sessionFilterRef: externalFilterRef, disable1MContext = false } = options
@@ -49,6 +47,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const animateRef = useRef<(timestamp: number) => void>(() => {})
   /** Throttle React UI updates to ~4/sec — canvas stays smooth via frameRef */
   const lastUIUpdateRef = useRef(0)
+  const lastUITimeRef = useRef(0)
 
   // ─── d3-force simulation ─────────────────────────────────────────────────
   useEffect(() => {
@@ -225,6 +224,17 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // Process captured external events (snapshotted outside the main
     // processing to avoid React strict mode double-invocation issues)
     if (capturedEvents) {
+      // Live events are appended at the tail and eventIndex snapped to the end
+      // below; if part of the log had not been replayed yet (review playback,
+      // restored snapshot) those events would be skipped forever. Apply them first.
+      if (!useMockData) {
+        while (newEventIndex < currentState.eventLog.length) {
+          const evt = currentState.eventLog[newEventIndex]
+          currentState = { ...processEventWithContext(evt, { ...currentState, currentTime: evt.time }), currentTime: evt.time }
+          newEventIndex++
+        }
+        newTime = Math.max(newTime, currentState.currentTime)
+      }
       for (const event of capturedEvents) {
         const activeFilter = sessionFilterRef.current
         if (activeFilter && event.sessionId && event.sessionId !== activeFilter) {
@@ -269,12 +279,17 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // Force tick — updates agent positions in frameRef
     if (forceSimRef.current) forceSimRef.current.tick()
 
-    // Throttle React re-renders — UI updates at ~4/sec, canvas stays smooth via frameRef
-    if (newEvents.length > 0) {
-      if (!lastUIUpdateRef.current || timestamp - lastUIUpdateRef.current >= UI_THROTTLE_MS) {
-        setState(frameRef.current)
-        lastUIUpdateRef.current = timestamp
-      }
+    // Throttle React re-renders — UI updates at most ~4/sec, canvas stays smooth via frameRef
+    if (shouldCommitFrame({
+      now: timestamp,
+      lastCommitAt: lastUIUpdateRef.current,
+      processedEvents: newEvents.length > 0,
+      currentTime: result.currentTime,
+      lastCommittedTime: lastUITimeRef.current,
+    })) {
+      setState(frameRef.current)
+      lastUIUpdateRef.current = timestamp
+      lastUITimeRef.current = result.currentTime
     }
 
     animationRef.current = requestAnimationFrame(animateRef.current)
@@ -434,9 +449,22 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
 
   const restoreSnapshot = useCallback((snapshot: { simState: SimulationState; blockId: number }) => {
     blockIdCounter.current = snapshot.blockId
-    commitState({ ...snapshot.simState, isPlaying: true })
-    setTimeout(() => syncForceSimulation(snapshot.simState.agents, snapshot.simState.edges), 0)
-  }, [syncForceSimulation, commitState])
+    let st = snapshot.simState
+    // A snapshot taken while paused/scrubbed still has un-replayed log entries.
+    // Restoring it with isPlaying=true would play them back at 1x under a LIVE
+    // badge; fast-forward to the end of the log so the tab comes back live.
+    if (!useMockData && st.eventIndex < st.eventLog.length) {
+      skipForceSyncRef.current = true
+      for (const evt of st.eventLog.slice(st.eventIndex)) {
+        st = { ...processEventWithContext(evt, { ...st, currentTime: evt.time }), currentTime: evt.time }
+      }
+      skipForceSyncRef.current = false
+      const t = Math.max(st.currentTime, st.maxTimeReached)
+      st = { ...snapVisualState(st, t), currentTime: t, eventIndex: st.eventLog.length }
+    }
+    commitState({ ...st, isPlaying: true })
+    setTimeout(() => syncForceSimulation(st.agents, st.edges), 0)
+  }, [syncForceSimulation, commitState, useMockData, processEventWithContext])
 
   return {
     // Canvas reads frameRef directly for 60fps rendering
