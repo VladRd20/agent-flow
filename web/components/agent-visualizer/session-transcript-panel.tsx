@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useState } from 'react'
+import { memo, useRef, useEffect, useState } from 'react'
 import { Z, CARD } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { TranscriptMessage } from './transcript-message'
@@ -23,7 +23,7 @@ interface TranscriptPanelProps {
   onClose: () => void
 }
 
-export function SessionTranscriptPanel({
+function SessionTranscriptPanelImpl({
   visible,
   conversation,
   runtime,
@@ -195,3 +195,5 @@ export function SessionTranscriptPanel({
     </SlidingPanel>
   )
 }
+
+export const SessionTranscriptPanel = memo(SessionTranscriptPanelImpl)

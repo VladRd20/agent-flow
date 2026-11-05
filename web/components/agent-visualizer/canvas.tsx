@@ -25,6 +25,7 @@ import {
 } from './canvas/index'
 import { useCanvasCamera } from '@/hooks/use-canvas-camera'
 import { useCanvasInteraction } from '@/hooks/use-canvas-interaction'
+import { frameDriver, wakeFrames, cappedDpr, PERF_STATS_ENABLED, type FrameMode } from '@/lib/frame-driver'
 import { prefersReducedMotion, subscribeReducedMotion } from '@/lib/reduced-motion'
 import { DIM_EASE_RATE, NODE_SIZE_EASE_RATE, REDUCED_MOTION_EASE_MULTIPLIER } from '@/lib/canvas-constants'
 
@@ -56,13 +57,16 @@ export function AgentCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
-  const animationRef = useRef<number>(0)
   const timeRef = useRef(0)
   const simTimeRef = useRef(0)
   const bloomRef = useRef<BloomRenderer | null>(null)
   const depthParticlesRef = useRef<DepthParticle[]>([])
   const lastFrameTimeRef = useRef(0)
   const dprRef = useRef(1)
+  /** Change tracking so an unchanged scene is not redrawn (frame-driver idling) */
+  const lastSeenRef = useRef<Record<string, unknown>>({})
+  /** Keep drawing (cheap tail) until this timestamp: covers eased hover/focus/label transitions */
+  const settleUntilRef = useRef(0)
 
   // Effects system
   const effectsRef = useRef<VisualEffect[]>([])
@@ -184,6 +188,12 @@ export function AgentCanvas({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- particles created once, resized by draw loop
   }, [])
 
+  // Prop-driven visual changes (selection from other panels, toggles, fit) must wake an idle frame driver.
+  useEffect(() => { wakeFrames() }, [
+    selectedAgentId, hoveredAgentId, showStats, showHexGrid, zoomToFitTrigger, pauseAutoFit,
+    selectedToolCallId, selectedDiscoveryId, showCostOverlay,
+  ])
+
   // Keep reducedMotionRef current if the OS setting changes mid-session —
   // the draw loop reads the ref directly so no re-render is needed.
   useEffect(() => {
@@ -195,18 +205,48 @@ export function AgentCanvas({
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const dpr = window.devicePixelRatio || 1
-    dprRef.current = dpr
+    dprRef.current = cappedDpr()
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const w = entry.contentRect.width
         const h = entry.contentRect.height
+        dprRef.current = cappedDpr()
         setDimensions({ width: w, height: h })
-        bloomRef.current?.resize(w * dpr, h * dpr)
+        bloomRef.current?.resize(w * dprRef.current, h * dprRef.current)
       }
+      wakeFrames()
     })
     observer.observe(container)
-    return () => observer.disconnect()
+
+    // Re-read dpr when the display scale changes (zoom, moving between monitors)
+    let mq: MediaQueryList | null = null
+    const onDprChange = () => {
+      dprRef.current = cappedDpr()
+      const r = container.getBoundingClientRect()
+      bloomRef.current?.resize(r.width * dprRef.current, r.height * dprRef.current)
+      bindDprQuery()
+      settleUntilRef.current = performance.now() + 700
+      wakeFrames()
+    }
+    const bindDprQuery = () => {
+      mq?.removeEventListener('change', onDprChange)
+      mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+      mq.addEventListener('change', onDprChange)
+    }
+    bindDprQuery()
+
+    // Input wakes the idle frame driver and keeps it drawing through inertia/easing.
+    const onInput = () => { settleUntilRef.current = performance.now() + 1200; wakeFrames() }
+    const inputEvents = ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'touchstart', 'touchmove', 'keydown'] as const
+    for (const ev of inputEvents) container.addEventListener(ev, onInput, { passive: true })
+    const onVisible = () => { if (!document.hidden) { settleUntilRef.current = performance.now() + 700; wakeFrames() } }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      observer.disconnect()
+      mq?.removeEventListener('change', onDprChange)
+      for (const ev of inputEvents) container.removeEventListener(ev, onInput)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   // ─── Detect state changes → spawn effects ──────────────────────────────
@@ -226,15 +266,14 @@ export function AgentCanvas({
 
   // Stable ref so the rAF loop always calls the latest draw without
   // re-subscribing when the callback identity changes.
-  const drawRef = useRef<(timestamp: number) => void>(() => {})
+  const drawRef = useRef<(timestamp: number, resumed?: boolean) => FrameMode>(() => 'idle')
 
-  const draw = useCallback((timestamp: number) => {
-    animationRef.current = requestAnimationFrame((ts) => drawRef.current(ts))
-
+  const draw = useCallback((timestamp: number, resumed = false): FrameMode => {
     const canvas = mainCanvasRef.current
-    if (!canvas) return
+    if (!canvas) return 'idle'
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!ctx) return 'idle'
+    const drawT0 = PERF_STATS_ENABLED ? performance.now() : 0
 
     try {
       // Sync simulation data from ref — always fresh, independent of React renders
@@ -258,26 +297,57 @@ export function AgentCanvas({
       } = drawPropsRef.current
       const transform = transformRef.current
 
-      const deltaTime = lastFrameTimeRef.current ? (timestamp - lastFrameTimeRef.current) / 1000 : ANIM_SPEED.defaultDeltaTime
+      if (resumed) lastFrameTimeRef.current = 0
+      const deltaTime = lastFrameTimeRef.current
+        ? Math.min((timestamp - lastFrameTimeRef.current) / 1000, ANIM_SPEED.maxDeltaTime)
+        : ANIM_SPEED.defaultDeltaTime
       lastFrameTimeRef.current = timestamp
-      timeRef.current += deltaTime
       if (simTime != null) simTimeRef.current = simTime
 
       const dpr = dprRef.current
       const w = dimensions.width
       const h = dimensions.height
 
-      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-        canvas.width = w * dpr
-        canvas.height = h * dpr
-        ctx.scale(dpr, dpr)
-      }
-
       // Camera physics (inertia + auto-fit)
       updateCamera(isDragging, pauseAutoFit)
 
       // Floaty agent drag
       updateDragLerp(agents, onAgentDrag)
+
+      // Skip the whole draw when nothing visible changed
+      const tf = transformRef.current
+      const seen = lastSeenRef.current
+      const sizeChanged = canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)
+      const changed = sizeChanged || resumed
+        || seen.agents !== agents || seen.toolCalls !== toolCalls || seen.particles !== particles
+        || seen.edges !== edges || seen.discoveries !== discoveries || seen.tf !== tf
+        || seen.sel !== selectedAgentId || seen.hover !== hoveredAgentId
+        || seen.selTool !== selectedToolCallId || seen.selDisc !== selectedDiscoveryId
+        || seen.stats !== showStats || seen.hex !== showHexGrid || seen.cost !== showCostOverlay
+      if (changed) {
+        seen.agents = agents; seen.toolCalls = toolCalls; seen.particles = particles
+        seen.edges = edges; seen.discoveries = discoveries; seen.tf = tf
+        seen.sel = selectedAgentId; seen.hover = hoveredAgentId
+        seen.selTool = selectedToolCallId; seen.selDisc = selectedDiscoveryId
+        seen.stats = showStats; seen.hex = showHexGrid; seen.cost = showCostOverlay
+        settleUntilRef.current = timestamp + 700
+      }
+      // Subtle ambient animation (pulsing active agents, bubble/tool timers)
+      let ambient = toolCalls.size > 0 || discoveries.length > 0
+      if (!ambient) {
+        for (const a of agents.values()) {
+          if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission' || a.messageBubbles.length > 0) { ambient = true; break }
+        }
+      }
+      const busyFull = particles.length > 0 || effectsRef.current.length > 0 || timestamp < settleUntilRef.current
+      if (!changed && !ambient && !busyFull) return 'idle'
+      timeRef.current += deltaTime
+
+      if (sizeChanged) {
+        canvas.width = Math.round(w * dpr)
+        canvas.height = Math.round(h * dpr)
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
       // Detect state changes → visual effects
       detectStateChanges()
@@ -396,6 +466,7 @@ export function AgentCanvas({
 
       if (showCostOverlay) drawCostSummaryPanel(ctx, agents, toolCalls)
       if (bloomRef.current) bloomRef.current.apply(canvas, ctx)
+      if (PERF_STATS_ENABLED) frameDriver.recordTaskMs('draw', performance.now() - drawT0)
 
       // ─── Performance overlay (enabled via ?perf or ?stress) ──────────
       if (PERF_OVERLAY_ENABLED) {
@@ -432,6 +503,7 @@ export function AgentCanvas({
         ctx.restore()
       }
 
+      return busyFull || changed ? 'full' : 'slow'
     } catch (err) {
       // Log at most once every 5s to avoid flooding the console
       const now = Date.now()
@@ -439,16 +511,18 @@ export function AgentCanvas({
         lastDrawErrorRef.current = now
         console.warn('[AgentCanvas] draw error:', err)
       }
+      return 'slow'
     }
   }, [detectStateChanges, updateCamera, updateDragLerp, transformRef, simulationRef])
 
   drawRef.current = draw
 
   useEffect(() => {
-    const loop = (timestamp: number) => drawRef.current(timestamp)
-    animationRef.current = requestAnimationFrame(loop)
-    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current) }
-    // drawRef is stable; rAF loop set up once
+    // Shared driver owns rAF, the 30fps cap on touch devices, hidden-tab stop and idling.
+    return frameDriver.register({
+      name: 'draw', order: 1,
+      tick: (ts, resumed) => drawRef.current(ts, resumed),
+    })
   }, [])
 
   return (

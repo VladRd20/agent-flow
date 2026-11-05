@@ -18,7 +18,6 @@ function animateAgents(agents: SimulationState['agents'], deltaTime: number, cur
     let updated = false
     let opacity = agent.opacity
     let scale = agent.scale
-    let timeAlive = agent.timeAlive
     let messageBubbles = agent.messageBubbles
 
     // Target opacity/scale by state, approached from whatever the agent's
@@ -47,7 +46,10 @@ function animateAgents(agents: SimulationState['agents'], deltaTime: number, cur
         : Math.max(targetScale, scale - deltaTime * ANIM_SPEED.agentScaleOut)
       updated = true
     }
-    if (agent.state !== 'complete') { timeAlive += deltaTime; updated = true }
+    // timeAlive only feeds a "12.3s" stats label. Accumulate it IN PLACE: copying
+    // the agent (and the whole agents Map) 60x/s for a label made every frame
+    // look like a structural change and defeated identity-based change checks.
+    if (agent.state !== 'complete') agent.timeAlive += deltaTime
     // Prune expired message bubbles
     if (messageBubbles.length > 0) {
       const pruned = messageBubbles.filter(b => currentTime - b.time <= BUBBLE_VISIBLE_S)
@@ -55,7 +57,7 @@ function animateAgents(agents: SimulationState['agents'], deltaTime: number, cur
     }
     if (updated) {
       if (newAgents === agents) newAgents = new Map(agents)
-      newAgents.set(id, { ...agent, opacity, scale, timeAlive, messageBubbles })
+      newAgents.set(id, { ...agent, opacity, scale, messageBubbles })
     }
   }
   return newAgents
@@ -135,42 +137,56 @@ function cleanupFaded(
   }
 
   // Remove orphaned edges whose endpoints no longer exist
-  filteredEdges = filteredEdges.filter(e => {
-    const fromExists = newAgents.has(e.from)
-    if (!fromExists) return false
-    const toExists = newAgents.has(e.to) || newToolCalls.has(e.to)
-    return toExists
-  })
+  const isOrphan = (e: SimulationState['edges'][number]) =>
+    !newAgents.has(e.from) || !(newAgents.has(e.to) || newToolCalls.has(e.to))
+  if (filteredEdges.some(isOrphan)) filteredEdges = filteredEdges.filter(e => !isOrphan(e))
   return { agents: newAgents, toolCalls: newToolCalls, edges: filteredEdges }
 }
 
 function animateDiscoveries(discoveries: SimulationState['discoveries'], deltaTime: number, newTime: number): SimulationState['discoveries'] {
-  return discoveries
-    .map(d => {
-      const age = newTime - d.timestamp
-      const lerpT = Math.min(1, deltaTime * DISCOVERY_LERP_SPEED)
-      const x = d.x + (d.targetX - d.x) * lerpT
-      const y = d.y + (d.targetY - d.y) * lerpT
-      if (age < DISCOVERY_HOLD_S) {
-        return { ...d, x, y, opacity: Math.min(0.9, d.opacity + deltaTime * ANIM_SPEED.discoveryFadeIn) }
-      } else {
-        return { ...d, x, y, opacity: Math.max(0, d.opacity - deltaTime * ANIM_SPEED.discoveryFadeOut) }
-      }
-    })
-    .filter(d => d.opacity > 0)
+  if (discoveries.length === 0) return discoveries
+  const lerpT = Math.min(1, deltaTime * DISCOVERY_LERP_SPEED)
+  let out: SimulationState['discoveries'] | null = null
+  for (let i = 0; i < discoveries.length; i++) {
+    const d = discoveries[i]
+    const age = newTime - d.timestamp
+    let x = d.x + (d.targetX - d.x) * lerpT
+    let y = d.y + (d.targetY - d.y) * lerpT
+    if (Math.abs(d.targetX - x) < 0.01) x = d.targetX
+    if (Math.abs(d.targetY - y) < 0.01) y = d.targetY
+    const opacity = age < DISCOVERY_HOLD_S
+      ? Math.min(0.9, d.opacity + deltaTime * ANIM_SPEED.discoveryFadeIn)
+      : Math.max(0, d.opacity - deltaTime * ANIM_SPEED.discoveryFadeOut)
+    if (opacity <= 0) {
+      if (!out) out = discoveries.slice(0, i)
+      continue
+    }
+    if (x === d.x && y === d.y && opacity === d.opacity) {
+      if (out) out.push(d)
+      continue
+    }
+    if (!out) out = discoveries.slice(0, i)
+    out.push({ ...d, x, y, opacity })
+  }
+  return out ?? discoveries
 }
 
 function animateParticles(particles: SimulationState['particles'], deltaTime: number, speed: number): SimulationState['particles'] {
-  const particleSpeed = ANIM_SPEED.particleSpeed * speed
-  return particles.map(p => {
-    if (p.type === 'return' || p.type === 'tool_return')
-      return { ...p, progress: Math.max(0, p.progress - deltaTime * particleSpeed) }
-    return { ...p, progress: Math.min(1, p.progress + deltaTime * particleSpeed) }
-  }).filter(p => {
-    if ((p.type === 'return' || p.type === 'tool_return') && p.progress <= 0) return false
-    if ((p.type === 'dispatch' || p.type === 'tool_call' || p.type === 'message') && p.progress >= 1) return false
-    return true
-  })
+  if (particles.length === 0) return particles
+  const step = deltaTime * ANIM_SPEED.particleSpeed * speed
+  const out: SimulationState['particles'] = []
+  for (const p of particles) {
+    if (p.type === 'return' || p.type === 'tool_return') {
+      const progress = Math.max(0, p.progress - step)
+      if (progress <= 0) continue
+      out.push({ ...p, progress })
+    } else {
+      const progress = Math.min(1, p.progress + step)
+      if ((p.type === 'dispatch' || p.type === 'tool_call' || p.type === 'message') && progress >= 1) continue
+      out.push({ ...p, progress })
+    }
+  }
+  return out
 }
 
 export function computeNextFrame(prev: SimulationState, deltaTime: number, newTime: number, maxT: number, currentState: SimulationState, options: AnimateOptions): SimulationState {

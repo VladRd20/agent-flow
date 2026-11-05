@@ -1,5 +1,7 @@
 'use client'
 
+import { memo } from 'react'
+
 import { CARD, Z, type AgentState } from '@/lib/agent-types'
 import { COLORS, getStateColor } from '@/lib/colors'
 import { TranscriptMessage } from './transcript-message'
@@ -17,7 +19,7 @@ interface ChatPanelProps {
   onClose: () => void
 }
 
-export function AgentChatPanel({
+function AgentChatPanelImpl({
   visible,
   agentName,
   agentState,
@@ -95,3 +97,5 @@ export function AgentChatPanel({
     </SlidingPanel>
   )
 }
+
+export const AgentChatPanel = memo(AgentChatPanelImpl)

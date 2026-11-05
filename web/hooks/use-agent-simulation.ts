@@ -18,6 +18,8 @@ import { processEvent, foldEvents, VISUAL_LIFETIME_S, HISTORICAL_BATCH_MIN, type
 import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
 import { shouldCommitFrame } from './simulation/ui-throttle'
+import { buildForceConfig } from './simulation/force-config'
+import { frameDriver, wakeFrames, PERF_STATS_ENABLED, type FrameMode } from '@/lib/frame-driver'
 
 /** Per-frame time budget for folding a replay backlog, and fold slice size. */
 const FOLD_BUDGET_MS = 8
@@ -43,14 +45,15 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     setState(next)
   }, [])
 
-  const animationRef = useRef<number>(0)
   const lastTimeRef = useRef<number>(0)
   const forceSimRef = useRef<Simulation<ForceNode, ForceLink> | null>(null)
   const blockIdCounter = useRef(0)
   const skipForceSyncRef = useRef(false)
   /** Events received but not yet folded into state (processed under a per-frame time budget). */
   const backlogRef = useRef<SimulationEvent[]>([])
-  const animateRef = useRef<(timestamp: number) => void>(() => {})
+  const animateRef = useRef<(timestamp: number, resumed?: boolean) => FrameMode>(() => 'idle')
+  /** Per-node collide radii (world px) from buildForceConfig, read by forceCollide */
+  const radiiRef = useRef<{ radii: Map<string, number>; fallback: number }>({ radii: new Map(), fallback: FORCE.collideRadius })
   /** Throttle React UI updates to ~4/sec — canvas stays smooth via frameRef */
   const lastUIUpdateRef = useRef(0)
   const lastUITimeRef = useRef(0)
@@ -60,27 +63,24 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     const sim = forceSimulation<ForceNode, ForceLink>([])
       .force('charge', forceManyBody().strength(FORCE.chargeStrength))
       .force('center', forceCenter(0, 0).strength(FORCE.centerStrength))
-      .force('collide', forceCollide(FORCE.collideRadius))
+      .force('collide', forceCollide<ForceNode>(n => radiiRef.current.radii.get(n.id) ?? radiiRef.current.fallback))
       .force('link', forceLink<ForceNode, ForceLink>([]).id(d => d.id).distance(FORCE.linkDistance).strength(FORCE.linkStrength))
       .alphaDecay(FORCE.alphaDecay)
       .velocityDecay(FORCE.velocityDecay)
       .on('tick', () => {
         // Force tick only updates positions — write to frameRef, no React render
         const prev = frameRef.current
-        const newAgents = new Map(prev.agents)
-        let changed = false
+        let newAgents: Map<string, Agent> | null = null
         for (const node of sim.nodes()) {
-          const agent = newAgents.get(node.id)
+          const agent = (newAgents ?? prev.agents).get(node.id)
           if (agent && !agent.pinned && node.x !== undefined && node.y !== undefined) {
             if (Math.abs(agent.x - node.x) > 0.1 || Math.abs(agent.y - node.y) > 0.1) {
+              if (!newAgents) newAgents = new Map(prev.agents)
               newAgents.set(node.id, { ...agent, x: node.x, y: node.y })
-              changed = true
             }
           }
         }
-        if (changed) {
-          frameRef.current = { ...prev, agents: newAgents }
-        }
+        if (newAgents) frameRef.current = { ...prev, agents: newAgents }
       })
 
     sim.stop()
@@ -105,12 +105,18 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       .filter(e => e.type === 'parent-child')
       .map(e => ({ id: e.id, source: e.from, target: e.to }))
 
+    const cfg = buildForceConfig(agents, edges)
+    radiiRef.current = { radii: cfg.radii, fallback: cfg.fallbackRadius }
+    const charge = sim.force('charge') as ReturnType<typeof forceManyBody> | undefined
+    if (charge) charge.strength(cfg.chargeStrength)
+
     sim.nodes(nodes)
     const linkForce = sim.force('link') as ReturnType<typeof forceLink> | undefined
-    if (linkForce) linkForce.links(links)
+    if (linkForce) { linkForce.links(links); linkForce.distance(cfg.linkDistance) }
     sim.alpha(0.3).restart()
     for (let i = 0; i < 15; i++) sim.tick()
     sim.stop()
+    wakeFrames()
   }, [])
 
   // ─── Tool slot placement ─────────────────────────────────────────────────
@@ -179,14 +185,10 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   // ─── Animation loop ──────────────────────────────────────────────────────
   // Reads/writes frameRef directly. Only calls commitState when new events
   // are processed, so React only re-renders UI on structural data changes.
-  const animate = useCallback((timestamp: number) => {
-    // Cap at 60fps to reduce CPU/GPU load
-    const elapsed = timestamp - lastTimeRef.current
-    if (lastTimeRef.current && elapsed < ANIM_SPEED.minFrameInterval) {
-      animationRef.current = requestAnimationFrame(animateRef.current)
-      return
-    }
-
+  // Returns how busy the sim is so the shared frame driver can idle/throttle.
+  const animate = useCallback((timestamp: number, resumed = false): FrameMode => {
+    // Frame pacing (60fps / 30fps coarse / hidden) is owned by the frame driver.
+    if (resumed) lastTimeRef.current = 0
     if (!lastTimeRef.current) lastTimeRef.current = timestamp
     const deltaTime = Math.min((timestamp - lastTimeRef.current) / 1000, ANIM_SPEED.maxDeltaTime)
     lastTimeRef.current = timestamp
@@ -200,10 +202,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     }
 
     const prev = frameRef.current
-    if (!prev.isPlaying) {
-      animationRef.current = requestAnimationFrame(animateRef.current)
-      return
-    }
+    if (!prev.isPlaying) return 'idle'
 
     let newTime = prev.currentTime + deltaTime * prev.speed
     let maxT = Math.max(prev.maxTimeReached, newTime)
@@ -312,8 +311,11 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // Write to frameRef (canvas reads this every frame)
     frameRef.current = result
 
-    // Force tick — updates agent positions in frameRef
-    if (forceSimRef.current) forceSimRef.current.tick()
+    // Force tick — updates agent positions in frameRef. Skipped once the
+    // layout has cooled; syncForceSimulation/drag re-heat it.
+    const fsim = forceSimRef.current
+    const simHot = !!fsim && fsim.alpha() >= fsim.alphaMin()
+    if (simHot) fsim!.tick()
 
     // Throttle React re-renders — UI updates at most ~4/sec, canvas stays smooth via frameRef
     if (shouldCommitFrame({
@@ -328,52 +330,51 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       lastUITimeRef.current = result.currentTime
     }
 
-    animationRef.current = requestAnimationFrame(animateRef.current)
+    // ── Idle detection ──
+    // 'full': something structurally animated this frame (or work is queued).
+    // 'slow': only ambient animation / clock-driven timers pending (30fps).
+    if (useMockData || simHot || newEvents.length > 0 || backlogRef.current.length > 0
+      || capturedEvents
+      || (!useMockData && result.eventIndex < result.eventLog.length)
+      || result.agents !== prev.agents || result.toolCalls !== prev.toolCalls
+      || result.edges !== prev.edges || result.particles !== prev.particles
+      || result.discoveries !== prev.discoveries) return 'full'
+    if (result.toolCalls.size > 0 || result.discoveries.length > 0) return 'slow'
+    for (const a of result.agents.values()) {
+      if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission'
+        || a.messageBubbles.length > 0) return 'slow'
+    }
+    // Settling into idle: flush one final UI commit so throttled-away state
+    // (last events, final clock value) reaches React before the loop stops.
+    setState(frameRef.current)
+    lastUIUpdateRef.current = timestamp
+    lastUITimeRef.current = result.currentTime
+    return 'idle'
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionFilter intentionally omitted; we read sessionFilterRef.current
   }, [processEventWithContext, useMockData, externalEvents, onExternalEventsConsumed])
 
   animateRef.current = animate
 
+  // Register with the shared frame driver while playing. The driver owns rAF,
+  // the 30fps coarse-pointer cap, hidden-tab timer ticks (runWhenHidden keeps
+  // event draining without rAF) and idling when nothing is animating.
   useEffect(() => {
-    const loop = (timestamp: number) => animateRef.current(timestamp)
-    let hiddenIntervalId: ReturnType<typeof setInterval> | null = null
-
-    const stopAll = () => {
-      if (animationRef.current) { cancelAnimationFrame(animationRef.current); animationRef.current = 0 }
-      if (hiddenIntervalId) { clearInterval(hiddenIntervalId); hiddenIntervalId = null }
-    }
-
-    // rAF is throttled or fully suspended by browsers on hidden/backgrounded
-    // tabs. If we relied on it alone, external events (agent spawn, dispatch,
-    // complete) would keep arriving but never get processed — agents would
-    // stay invisible (opacity stuck at 0) until the tab regains focus, at
-    // which point rAF resumes and rapidly replays the backlog, making an
-    // agent appear to "pop in" already complete. A low-rate interval keeps
-    // the simulation ticking (and events draining) while hidden.
-    const startForVisibility = () => {
-      stopAll()
-      lastTimeRef.current = 0
-      if (typeof document !== 'undefined' && document.hidden) {
-        hiddenIntervalId = setInterval(() => animateRef.current(performance.now()), ANIM_SPEED.hiddenTabTickInterval)
-      } else {
-        animationRef.current = requestAnimationFrame(loop)
-      }
-    }
-
-    if (!state.isPlaying) {
-      stopAll()
-      return
-    }
-
-    startForVisibility()
-    const onVisibilityChange = () => { if (state.isPlaying) startForVisibility() }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-      stopAll()
-    }
+    if (!state.isPlaying) return
+    const unregister = frameDriver.register({
+      name: 'sim', order: 0, runWhenHidden: true,
+      tick: (ts, resumed) => {
+        if (!PERF_STATS_ENABLED) return animateRef.current(ts, resumed)
+        const t0 = performance.now()
+        const m = animateRef.current(ts, resumed)
+        frameDriver.recordTaskMs('sim', performance.now() - t0)
+        return m
+      },
+    })
+    return unregister
   }, [state.isPlaying])
+
+  // New external events must wake an idle driver.
+  useEffect(() => { wakeFrames() }, [externalEvents, state.speed])
 
   // ─── Playback controls ───────────────────────────────────────────────────
   const play = useCallback(() => {
@@ -445,7 +446,10 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     if (forceSimRef.current) {
       const node = forceSimRef.current.nodes().find(n => n.id === agentId)
       if (node) { node.fx = x; node.fy = y }
+      // Gently re-heat so neighbours react to the drag, then cool down again
+      if (forceSimRef.current.alpha() < 0.05) forceSimRef.current.alpha(0.05)
     }
+    wakeFrames()
   }, [])
 
   /** Seek to a specific time — replays events from scratch up to targetTime */

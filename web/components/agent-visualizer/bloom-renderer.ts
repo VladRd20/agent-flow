@@ -4,14 +4,44 @@
  * and composites back with additive blending.
  */
 
+/** True if this browser's 2D context actually applies ctx.filter (Safari has
+ *  historically accepted the property but ignored it, so a read-back is not a
+ *  reliable test — render a pixel through `invert(1)` and check). */
+function supportsCanvasFilter(): boolean {
+  try {
+    const src = document.createElement('canvas')
+    src.width = src.height = 2
+    const sctx = src.getContext('2d')
+    const dst = document.createElement('canvas')
+    dst.width = dst.height = 2
+    const dctx = dst.getContext('2d', { willReadFrequently: true })
+    if (!sctx || !dctx) return false
+    sctx.fillStyle = '#fff'
+    sctx.fillRect(0, 0, 2, 2)
+    dctx.filter = 'invert(1)'
+    dctx.drawImage(src, 0, 0)
+    return dctx.getImageData(0, 0, 1, 1).data[0] < 16
+  } catch {
+    return false
+  }
+}
+
+const isCoarse = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches
+
 export class BloomRenderer {
   private bloomCanvas: HTMLCanvasElement
   private bloomCtx: CanvasRenderingContext2D
   private tempCanvas: HTMLCanvasElement
   private tempCtx: CanvasRenderingContext2D
   private intensity: number
-
+  /** Canvas holding the latest blurred result (ping-pong ends on either buffer). */
+  private result: HTMLCanvasElement
   private enabled: boolean
+  /** Buffer scale relative to the source canvas, and frames between refreshes. */
+  private readonly scale: number
+  private readonly refreshEvery: number
+  private frame = 0
+  private hasResult = false
 
   constructor(intensity: number = 0.6) {
     this.intensity = intensity
@@ -19,77 +49,73 @@ export class BloomRenderer {
     this.tempCanvas = document.createElement('canvas')
     const bCtx = this.bloomCanvas.getContext('2d')
     const tCtx = this.tempCanvas.getContext('2d')
-    this.enabled = !!(bCtx && tCtx)
+    this.enabled = !!(bCtx && tCtx) && supportsCanvasFilter()
     this.bloomCtx = bCtx!
     this.tempCtx = tCtx!
+    this.result = this.bloomCanvas
+    // Phones: quarter resolution, refresh every 3rd frame. Desktop: half
+    // resolution (as before), refresh every 2nd frame.
+    const coarse = isCoarse()
+    this.scale = coarse ? 0.25 : 0.5
+    this.refreshEvery = coarse ? 3 : 2
   }
 
   resize(width: number, height: number): void {
-    // Bloom at half resolution for performance
-    const scale = 0.5
-    this.bloomCanvas.width = width * scale
-    this.bloomCanvas.height = height * scale
-    this.tempCanvas.width = width * scale
-    this.tempCanvas.height = height * scale
+    for (const c of [this.bloomCanvas, this.tempCanvas]) {
+      c.width = Math.max(1, Math.round(width * this.scale))
+      c.height = Math.max(1, Math.round(height * this.scale))
+    }
+    this.hasResult = false
+    this.frame = 0
   }
 
   apply(sourceCanvas: HTMLCanvasElement, targetCtx: CanvasRenderingContext2D): void {
     const w = this.bloomCanvas.width
     const h = this.bloomCanvas.height
-
     if (w === 0 || h === 0 || !this.enabled) return
 
-    // Draw source at half resolution, thresholded so only genuinely bright
-    // pixels (node strokes, glow sprites, beams) feed the bloom buffer.
-    // Without this, the *whole* scene — including hard edges and label
-    // text — gets a blurred duplicate composited back on top of itself,
-    // which reads as the entire canvas being soft/blurry rather than as a
-    // glow around bright elements. brightness(0.5) first dims everything,
-    // then contrast(300%) crushes anything still below mid-gray to black
-    // while pushing genuinely bright pixels up — a cheap luminance
-    // threshold using only standard canvas filters.
-    this.bloomCtx.clearRect(0, 0, w, h)
-    this.bloomCtx.filter = 'brightness(0.5) contrast(300%)'
-    this.bloomCtx.drawImage(sourceCanvas, 0, 0, w, h)
-    this.bloomCtx.filter = 'none'
+    if (!this.hasResult || this.frame++ % this.refreshEvery === 0) {
+      // Thresholded downscale: brightness(0.5) then contrast(300%) crushes
+      // anything below mid-gray so only genuinely bright pixels feed the bloom.
+      const b = this.bloomCtx
+      b.clearRect(0, 0, w, h)
+      b.filter = 'brightness(0.5) contrast(300%)'
+      b.drawImage(sourceCanvas, 0, 0, w, h)
+      b.filter = 'none'
 
-    // Apply blur passes (box blur approximation of gaussian)
-    this.boxBlur(this.bloomCtx, this.tempCtx, w, h, 8)
-    this.boxBlur(this.bloomCtx, this.tempCtx, w, h, 6)
-    this.boxBlur(this.bloomCtx, this.tempCtx, w, h, 4)
+      // Three blur passes, ping-ponging between buffers (one drawImage each).
+      // Radii are in buffer pixels, scaled to keep the same on-screen spread
+      // as the original half-res 8/6/4.
+      const k = this.scale / 0.5
+      this.blurPass(this.bloomCtx, this.tempCtx, w, h, 8 * k)
+      this.blurPass(this.tempCtx, this.bloomCtx, w, h, 6 * k)
+      this.blurPass(this.bloomCtx, this.tempCtx, w, h, 4 * k)
+      this.result = this.tempCanvas
+      this.hasResult = true
+    }
 
-    // Composite bloom over the target with additive blending.
-    // targetCtx still has canvas.tsx's devicePixelRatio scale() active at
-    // this point (it's only reset when the canvas itself is resized, not
-    // saved/restored around this call) — drawing sourceCanvas's PHYSICAL
-    // pixel dimensions through an already-dpr-scaled context stretched the
-    // blurred bloom buffer to dpr² the intended area, washing out the
-    // whole canvas on any non-1 devicePixelRatio display. Reset to the
-    // identity transform first so the draw call's own dimensions are the
-    // only scaling in effect.
+    // Composite additively. Reset transform first: targetCtx still carries the
+    // dpr scale(), and drawing physical-pixel sizes through it would stretch
+    // the bloom to dpr^2 of the intended area.
     targetCtx.save()
     targetCtx.setTransform(1, 0, 0, 1, 0, 0)
     targetCtx.globalCompositeOperation = 'lighter'
     targetCtx.globalAlpha = this.intensity
-    targetCtx.drawImage(this.bloomCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height)
+    targetCtx.drawImage(this.result, 0, 0, sourceCanvas.width, sourceCanvas.height)
     targetCtx.restore()
   }
 
-  private boxBlur(
-    srcCtx: CanvasRenderingContext2D,
-    tmpCtx: CanvasRenderingContext2D,
+  private blurPass(
+    from: CanvasRenderingContext2D,
+    to: CanvasRenderingContext2D,
     w: number,
     h: number,
     radius: number,
   ): void {
-    // Use CSS filter for fast blur
-    tmpCtx.clearRect(0, 0, w, h)
-    tmpCtx.filter = `blur(${radius}px)`
-    tmpCtx.drawImage(srcCtx.canvas, 0, 0)
-    tmpCtx.filter = 'none'
-
-    srcCtx.clearRect(0, 0, w, h)
-    srcCtx.drawImage(tmpCtx.canvas, 0, 0)
+    to.clearRect(0, 0, w, h)
+    to.filter = `blur(${radius}px)`
+    to.drawImage(from.canvas, 0, 0)
+    to.filter = 'none'
   }
 
   setIntensity(intensity: number): void {

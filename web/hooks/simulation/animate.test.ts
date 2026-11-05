@@ -60,3 +60,39 @@ test('a non-main agent that spawns already-complete (opacity 0) stays invisible 
   const s = computeNextFrame(state, 0.1, 0.1, 0.1, state, OPTIONS)
   assert.equal(s.agents.has('sub-1'), false)
 })
+
+test('a settled frame is allocation-free: agents/toolCalls/edges/particles/discoveries keep identity', () => {
+  const state = createEmptyState({
+    agents: new Map([['a', makeAgent({ id: 'a', opacity: 1, scale: 1, state: 'thinking', isMain: true })]]),
+  })
+  const next = computeNextFrame(state, 0.016, 1, 1, state, OPTIONS)
+  assert.equal(next.agents, state.agents)
+  assert.equal(next.agents.get('a'), state.agents.get('a'))
+  assert.equal(next.toolCalls, state.toolCalls)
+  assert.equal(next.edges, state.edges)
+  assert.equal(next.particles, state.particles)
+  assert.equal(next.discoveries, state.discoveries)
+})
+
+test('timeAlive still accumulates for a live agent without changing agent identity', () => {
+  const state = createEmptyState({
+    agents: new Map([['a', makeAgent({ id: 'a', opacity: 1, scale: 1, state: 'thinking', isMain: true })]]),
+  })
+  const agentBefore = state.agents.get('a')!
+  computeNextFrame(state, 0.5, 1, 1, state, OPTIONS)
+  assert.equal(state.agents.get('a'), agentBefore)
+  assert.equal(agentBefore.timeAlive, 0.5)
+})
+
+test('a fading agent produces a new agents Map, untouched agents keep identity', () => {
+  const state = createEmptyState({
+    agents: new Map([
+      ['a', makeAgent({ id: 'a', opacity: 1, scale: 1, state: 'thinking', isMain: true })],
+      ['b', makeAgent({ id: 'b', isMain: false, opacity: 0.2, scale: 1, state: 'thinking' })],
+    ]),
+  })
+  const next = computeNextFrame(state, 0.1, 1, 1, state, OPTIONS)
+  assert.notEqual(next.agents, state.agents)
+  assert.equal(next.agents.get('a'), state.agents.get('a'))
+  assert.ok(next.agents.get('b')!.opacity > 0.2)
+})

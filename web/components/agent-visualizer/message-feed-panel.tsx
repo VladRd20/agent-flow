@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Agent, Z } from '@/lib/agent-types'
 import { COLORS, ROLE_COLORS, getStateColor } from '@/lib/colors'
 import type { ConversationMessage } from '@/hooks/simulation/types'
@@ -29,7 +29,7 @@ const MESSAGE_GAP = 4
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
-export function MessageFeedPanel({
+function MessageFeedPanelImpl({
   conversations,
   agents,
   onAgentClick,
@@ -437,3 +437,5 @@ function MessageRow({ message, agentName, showAgent, isSelected, onClick, runtim
     </div>
   )
 }
+
+export const MessageFeedPanel = memo(MessageFeedPanelImpl)

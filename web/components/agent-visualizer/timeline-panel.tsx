@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useMemo, useCallback } from 'react'
+import { memo, useRef, useEffect, useMemo, useCallback } from 'react'
 import { TimelineEntry, Z } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { formatTimelineModels } from '@/lib/timeline-models'
@@ -178,7 +178,7 @@ function drawTimeline(
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }: TimelinePanelProps) {
+function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: TimelinePanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const isMobile = useIsMobile()
 
@@ -262,3 +262,5 @@ export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }
     </SlidingPanel>
   )
 }
+
+export const TimelinePanel = memo(TimelinePanelImpl)
