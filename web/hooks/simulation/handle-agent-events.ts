@@ -48,14 +48,20 @@ export function handleAgentSpawn(
     return
   }
 
-  // Finished earlier and hidden (not yet expired): resume it in place, with its stats.
-  if (reviveHiddenAgent(state, name, currentTime, ctx, {
-    ...(task ? { task } : {}),
-    ...(model ? { model, tokensMax: ctx.getContextWindowSize(model) } : {}),
-    ...(runtime ? { runtime } : {}),
-  })) {
-    if (model) recordTimelineModel(state, name, model)
-    return
+  // Finished earlier and hidden (not yet expired). Only a real resume (the
+  // extension flags it `resumed: true`) brings the old node back with its stats;
+  // a brand-new agent that merely reuses the name replaces the hidden one.
+  if (state.hiddenAgents.has(name)) {
+    if (payload.resumed === true) {
+      reviveHiddenAgent(state, name, currentTime, ctx, {
+        ...(task ? { task } : {}),
+        ...(model ? { model, tokensMax: ctx.getContextWindowSize(model) } : {}),
+        ...(runtime ? { runtime } : {}),
+      })
+      if (model) recordTimelineModel(state, name, model)
+      return
+    }
+    state.hiddenAgents.delete(name)
   }
 
   let x = 0, y = 0

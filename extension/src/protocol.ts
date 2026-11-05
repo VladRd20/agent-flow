@@ -124,7 +124,8 @@ export interface AgentEventEmitter {
  * Emit the paired subagent_dispatch + agent_spawn events.
  *
  * This two-event sequence is required every time a subagent is spawned and was
- * previously duplicated in SessionWatcher and TranscriptParser.
+ * previously duplicated in SessionWatcher and TranscriptParser. Pass
+ * `resumed` when re-spawning an agent that already ran.
  */
 export function emitSubagentSpawn(
   emitter: AgentEventEmitter,
@@ -132,6 +133,7 @@ export function emitSubagentSpawn(
   child: string,
   task: string,
   sessionId?: string,
+  resumed = false,
 ): void {
   emitter.emit({
     time: emitter.elapsed(sessionId),
@@ -146,7 +148,10 @@ export function emitSubagentSpawn(
     // through deriveAgentType() anyway rather than hardcoding the literal,
     // so this site can't drift from the other emission sites if the
     // category logic ever changes.
-    payload: { name: child, parent, task, agentType: deriveAgentType(false) },
+    // `resumed` marks a re-spawn of an agent that already ran (its transcript
+    // was written again), so consumers revive the old node instead of treating
+    // a name collision as a resume.
+    payload: { name: child, parent, task, agentType: deriveAgentType(false), ...(resumed ? { resumed: true } : {}) },
   }, sessionId)
 }
 
