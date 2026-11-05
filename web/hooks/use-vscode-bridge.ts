@@ -80,6 +80,8 @@ export function useVSCodeBridge(): BridgeHookResult {
   const [sessionsWithActivity, setSessionsWithActivity] = useState<Set<string>>(new Set())
   /** Where the outgoing session's delivery stood when a switch began (see takeSwitchCursor). */
   const switchCursorRef = useRef<{ sessionId: string; end: number } | null>(null)
+  /** Every session id this client has been told about (list or started). */
+  const knownSessionIdsRef = useRef<Set<string>>(new Set())
 
   /** Start switching the selection. Records the outgoing session's delivered
    *  cursor BEFORE pending is cleared: events still pending, or arriving before
@@ -279,6 +281,7 @@ export function useVSCodeBridge(): BridgeHookResult {
         selectedSessionIdRef.current = null
         pendingEventsRef.current.length = 0
         switchCursorRef.current = null
+        knownSessionIdsRef.current.clear()
         sessionEventsRef.current.clear()
         seqTrackerRef.current.clear()
         setSessionsWithActivity(new Set())
@@ -287,6 +290,7 @@ export function useVSCodeBridge(): BridgeHookResult {
       }
       if (type === 'list') {
         const sessionList = data as SessionInfo[]
+        for (const s of sessionList) knownSessionIdsRef.current.add(s.id)
         setSessions(sessionList)
         // Evict replay buffers (and cursors) of sessions the relay no longer lists
         const listed = new Set(sessionList.map(s => s.id))
@@ -316,6 +320,11 @@ export function useVSCodeBridge(): BridgeHookResult {
         // sessionSwitchPendingRef without anything ever clearing it (the layout
         // effect only runs when the selection changes), freezing event delivery.
         const alreadySelected = session.id === selectedSessionIdRef.current
+        // The relay re-sends 'started' when an idle session resumes; only a
+        // genuinely new session may take over the view, or every background
+        // session waking up would yank the user away from the one they watch.
+        const isNewSession = !knownSessionIdsRef.current.has(session.id)
+        knownSessionIdsRef.current.add(session.id)
         setSessions(prev => {
           const existing = prev.find(s => s.id === session.id)
           if (existing) {
@@ -326,7 +335,7 @@ export function useVSCodeBridge(): BridgeHookResult {
           }
           return [...prev, session]
         })
-        if (alreadySelected) return
+        if (alreadySelected || (!isNewSession && selectedSessionIdRef.current)) return
         // Auto-select newly started session.
         // Set switch-pending flag to prevent the animation frame from processing
         // events in the wrong simulation state before useLayoutEffect swaps it.
