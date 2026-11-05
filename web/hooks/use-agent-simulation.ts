@@ -14,10 +14,14 @@ import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, t
 
 import type { SimulationState, ForceNode, ForceLink, UseAgentSimulationOptions } from './simulation/types'
 import { createEmptyState, MAX_EVENT_LOG } from './simulation/types'
-import { processEvent, type ProcessEventContext } from './simulation/process-event'
+import { processEvent, foldEvents, VISUAL_LIFETIME_S, HISTORICAL_BATCH_MIN, type ProcessEventContext } from './simulation/process-event'
 import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
 import { shouldCommitFrame } from './simulation/ui-throttle'
+
+/** Per-frame time budget for folding a replay backlog, and fold slice size. */
+const FOLD_BUDGET_MS = 8
+const FOLD_SLICE = 250
 
 export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const { useMockData = true, externalEvents, onExternalEventsConsumed, sessionFilter, sessionFilterRef: externalFilterRef, disable1MContext = false } = options
@@ -44,6 +48,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const forceSimRef = useRef<Simulation<ForceNode, ForceLink> | null>(null)
   const blockIdCounter = useRef(0)
   const skipForceSyncRef = useRef(false)
+  /** Events received but not yet folded into state (processed under a per-frame time budget). */
+  const backlogRef = useRef<SimulationEvent[]>([])
   const animateRef = useRef<(timestamp: number) => void>(() => {})
   /** Throttle React UI updates to ~4/sec — canvas stays smooth via frameRef */
   const lastUIUpdateRef = useRef(0)
@@ -158,16 +164,17 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     return DEFAULT_CONTEXT_SIZE
   }, [disable1MContext])
 
+  const makeCtx = useCallback((skipForceSync: boolean): ProcessEventContext => ({
+    syncForceSimulation,
+    findToolSlot,
+    getContextWindowSize,
+    blockIdCounter,
+    skipForceSync,
+  }), [syncForceSimulation, findToolSlot, getContextWindowSize])
+
   const processEventWithContext = useCallback((event: SimulationEvent, prev: SimulationState): SimulationState => {
-    const ctx: ProcessEventContext = {
-      syncForceSimulation,
-      findToolSlot,
-      getContextWindowSize,
-      blockIdCounter,
-      skipForceSync: skipForceSyncRef.current,
-    }
-    return processEvent(event, prev, ctx)
-  }, [syncForceSimulation, findToolSlot, getContextWindowSize])
+    return processEvent(event, prev, makeCtx(skipForceSyncRef.current))
+  }, [makeCtx])
 
   // ─── Animation loop ──────────────────────────────────────────────────────
   // Reads/writes frameRef directly. Only calls commitState when new events
@@ -235,17 +242,46 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
         }
         newTime = Math.max(newTime, currentState.currentTime)
       }
+      const activeFilter = sessionFilterRef.current
       for (const event of capturedEvents) {
-        const activeFilter = sessionFilterRef.current
-        if (activeFilter && event.sessionId && event.sessionId !== activeFilter) {
-          continue
-        }
-        const eventTime = Math.max(event.time || newTime, newTime)
-        const timedEvent = { ...event, time: eventTime }
-        currentState = { ...currentState, currentTime: eventTime }
-        currentState = processEventWithContext(timedEvent, currentState)
-        newEvents.push(timedEvent)
+        if (activeFilter && event.sessionId && event.sessionId !== activeFilter) continue
+        backlogRef.current.push(event)
       }
+    }
+
+    // Fold the backlog with one state copy per slice, under a per-frame time
+    // budget so a large replay (initial load / session switch) never blocks a
+    // frame. Large backlogs are "historical": visuals that would already have
+    // faded by the end of the batch are skipped, and the force layout is synced
+    // once at the end instead of per spawn.
+    const backlog = backlogRef.current
+    if (!useMockData && backlog.length > 0) {
+      const historical = backlog.length >= HISTORICAL_BATCH_MIN
+      let endTime = newTime
+      if (historical) for (const e of backlog) if (e.time > endTime) endTime = e.time
+      const visualCutoff = historical ? endTime - VISUAL_LIFETIME_S : undefined
+      const ctx = makeCtx(historical)
+      const frameStart = performance.now()
+      let done = 0
+      while (done < backlog.length) {
+        const slice = backlog.slice(done, done + FOLD_SLICE)
+        const folded = foldEvents(slice, currentState, ctx, {
+          resolveTime: (e) => Math.max(e.time || newTime, newTime),
+          visualCutoff,
+        })
+        currentState = folded.state
+        for (const e of folded.applied) newEvents.push(e)
+        done += slice.length
+        if (historical && performance.now() - frameStart > FOLD_BUDGET_MS) break
+      }
+      backlog.splice(0, done)
+      if (historical && backlog.length === 0) {
+        const { agents, edges } = currentState
+        setTimeout(() => syncForceSimulation(agents, edges), 0)
+      }
+    }
+
+    if (!useMockData && newEvents.length > 0) {
       // Sync simulation clock to latest event so active state renders correctly
       newTime = Math.max(newTime, currentState.currentTime)
       maxT = Math.max(maxT, newTime)
@@ -253,10 +289,10 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
 
     // Append new events to log
     if (newEvents.length > 0) {
-      let newLog = currentState.eventLog.concat(newEvents)
-      if (newLog.length > MAX_EVENT_LOG) {
-        newLog = newLog.slice(newLog.length - MAX_EVENT_LOG)
-      }
+      // Single copy: keep only the tail that fits instead of concat-then-slice
+      const keepOld = Math.max(0, MAX_EVENT_LOG - newEvents.length)
+      const newLog = (keepOld >= currentState.eventLog.length ? currentState.eventLog : currentState.eventLog.slice(currentState.eventLog.length - keepOld))
+        .concat(newEvents.length > MAX_EVENT_LOG ? newEvents.slice(newEvents.length - MAX_EVENT_LOG) : newEvents)
       // In mock mode, eventIndex tracks position in MOCK_SCENARIO (not the log).
       // In live mode, eventIndex tracks position in the event log.
       if (!useMockData) {
@@ -357,6 +393,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
 
   const restart = useCallback((keepActive = false) => {
     blockIdCounter.current = 0
+    backlogRef.current.length = 0
     if (!keepActive) {
       commitState(createEmptyState({ isPlaying: true, speed: frameRef.current.speed }))
       return
@@ -449,6 +486,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
 
   const restoreSnapshot = useCallback((snapshot: { simState: SimulationState; blockId: number }) => {
     blockIdCounter.current = snapshot.blockId
+    backlogRef.current.length = 0
     let st = snapshot.simState
     // A snapshot taken while paused/scrubbed still has un-replayed log entries.
     // Restoring it with isPlaying=true would play them back at 1x under a LIVE

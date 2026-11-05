@@ -3,16 +3,14 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { vscodeBridge, type ConnectionStatus, type AgentEvent, type SessionInfo } from '@/lib/vscode-bridge'
 import { SimulationEvent } from '@/lib/agent-types'
-import { pushCapped } from '@/lib/capped-buffer'
+import { SeqTracker } from '@/lib/seq-tracker'
+import { SessionEventBuffer } from '@/lib/session-event-buffer'
 
 /** Max events kept in the per-session replay buffer (oldest are dropped).
- *  Matches MAX_EVENT_BUFFER in scripts/relay.ts — without this cap a
- *  long-running/high-volume session grows this array for the life of the page.
- *  Kept high (rather than matching the tighter MAX_EVENT_LOG) because trimming
- *  from the front would also invalidate any `fromIndex` bookmark a caller saved
- *  via getSessionEventCount() before the trim — at this size that's not a
- *  realistic concern for a single session. */
-const MAX_SESSION_EVENT_BUFFER = 50_000
+ *  Without a cap a long-running/high-volume session grows this for the life of
+ *  the page. Trimming uses SessionEventBuffer's base offset, so the absolute
+ *  `fromIndex` bookmarks from getSessionEventCount() stay valid after a trim. */
+const MAX_SESSION_EVENT_BUFFER = 10_000
 
 interface BridgeHookResult {
   isVSCode: boolean
@@ -66,7 +64,9 @@ export function useVSCodeBridge(): BridgeHookResult {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const selectedSessionIdRef = useRef<string | null>(null)
-  const sessionEventsRef = useRef<Map<string, SimulationEvent[]>>(new Map())
+  const sessionEventsRef = useRef<Map<string, SessionEventBuffer<SimulationEvent>>>(new Map())
+  /** Last relay seq seen per session + relay epoch, for dedupe and resume-on-reconnect. */
+  const seqTrackerRef = useRef(new SeqTracker())
   /** Per-session ms timestamp of the last lastActivityTime state update (throttle gate). */
   const lastActivityTouchRef = useRef<Map<string, number>>(new Map())
   /** True while a session switch is pending (between auto-select and useLayoutEffect).
@@ -88,24 +88,59 @@ export function useVSCodeBridge(): BridgeHookResult {
     if (!isStandalone && (process.env.NODE_ENV !== 'development' || process.env.NEXT_PUBLIC_DEMO !== '0')) return
 
     const relayPort = process.env.NEXT_PUBLIC_RELAY_PORT || ''
-    const es = new EventSource(relayPort ? `http://127.0.0.1:${relayPort}/events` : '/events')
+    const baseUrl = relayPort ? `http://127.0.0.1:${relayPort}/events` : '/events'
+    const tracker = seqTrackerRef.current
+    let es: EventSource | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let disposed = false
 
-    es.onopen = () => {
-      setConnectionStatus('connected')
-      setUseMockData(false)
+    // Reconnect manually (instead of relying on EventSource's built-in retry,
+    // which reuses the original URL) so every reconnect carries the resume
+    // cursor and the server only replays events we have not seen.
+    const connect = () => {
+      if (disposed) return
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
+      es?.close()
+      const query = tracker.query()
+      const source = new EventSource(query ? `${baseUrl}?${query}` : baseUrl)
+      es = source
+      source.onopen = () => {
+        setConnectionStatus('connected')
+        setUseMockData(false)
+      }
+      source.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          if (data && data.type === 'hello' && typeof data.epoch === 'string') {
+            // Relay restarted: seq numbers restarted too. Drop everything
+            // (buffers, selection, cursors) and accept the full replay.
+            if (tracker.setEpoch(data.epoch)) {
+              window.postMessage({ type: 'reset', reason: 'server-restarted' }, '*')
+            }
+            return
+          }
+          window.postMessage(data, '*')
+        } catch {}
+      }
+      source.onerror = () => {
+        setConnectionStatus('disconnected')
+        source.close()
+        if (!disposed && es === source && !retryTimer) retryTimer = setTimeout(connect, 3000)
+      }
     }
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data)
-        window.postMessage(data, '*')
-      } catch {}
+    connect()
+
+    // Mobile browsers suspend the stream in the background: reconnect promptly on return.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && es && es.readyState === EventSource.CLOSED) connect()
     }
-    es.onerror = () => {
-      setConnectionStatus('disconnected')
-    }
+    document.addEventListener('visibilitychange', onVisible)
 
     return () => {
-      es.close()
+      disposed = true
+      if (retryTimer) clearTimeout(retryTimer)
+      document.removeEventListener('visibilitychange', onVisible)
+      es?.close()
     }
   }, [])
 
@@ -123,6 +158,9 @@ export function useVSCodeBridge(): BridgeHookResult {
     // selectedSessionIdRef is updated synchronously (not via React state) so it's
     // always current even before React re-renders.
     const unsubEvent = bridge.onEvent((event: AgentEvent) => {
+      // Drop replays/duplicates (EventSource reconnects, overlapping batches).
+      // Events without a seq (VS Code webview path) always pass.
+      if (!seqTrackerRef.current.accept(event.sessionId, event.seq)) return
       const simEvent: SimulationEvent = {
         time: event.time,
         type: event.type as SimulationEvent['type'],
@@ -134,9 +172,12 @@ export function useVSCodeBridge(): BridgeHookResult {
       // Capped the same way the simulation's own eventLog is capped (MAX_EVENT_LOG)
       // so a long-running/high-volume session doesn't grow this forever.
       if (event.sessionId) {
-        const buf = sessionEventsRef.current.get(event.sessionId) || []
-        pushCapped(buf, simEvent, MAX_SESSION_EVENT_BUFFER)
-        sessionEventsRef.current.set(event.sessionId, buf)
+        let buf = sessionEventsRef.current.get(event.sessionId)
+        if (!buf) {
+          buf = new SessionEventBuffer<SimulationEvent>(MAX_SESSION_EVENT_BUFFER)
+          sessionEventsRef.current.set(event.sessionId, buf)
+        }
+        buf.push(simEvent)
         // Keep lastActivityTime roughly current (throttled: one state update per 5s per session)
         // Gated by a ref so setSessions isn't even called (no React render
         // scheduled) for the vast majority of events.
@@ -208,6 +249,7 @@ export function useVSCodeBridge(): BridgeHookResult {
         selectedSessionIdRef.current = null
         pendingEventsRef.current.length = 0
         sessionEventsRef.current.clear()
+        seqTrackerRef.current.clear()
         setSessionsWithActivity(new Set())
         dismissedSessionsRef.current.clear()
         return
@@ -215,6 +257,14 @@ export function useVSCodeBridge(): BridgeHookResult {
       if (type === 'list') {
         const sessionList = data as SessionInfo[]
         setSessions(sessionList)
+        // Evict replay buffers (and cursors) of sessions the relay no longer lists
+        const listed = new Set(sessionList.map(s => s.id))
+        for (const id of [...sessionEventsRef.current.keys()]) {
+          if (!listed.has(id) && id !== selectedSessionIdRef.current) {
+            sessionEventsRef.current.delete(id)
+            seqTrackerRef.current.forget(id)
+          }
+        }
         // Auto-select: prefer active sessions, then most recently active.
         // Only set selection — useLayoutEffect handles flushing events.
         if (!selectedSessionIdRef.current && sessionList.length > 0) {
@@ -305,13 +355,14 @@ export function useVSCodeBridge(): BridgeHookResult {
    *  Must be called from useLayoutEffect AFTER simulation state is saved/swapped. */
   const flushSessionEvents = useCallback((sessionId: string, fromIndex = 0) => {
     sessionSwitchPendingRef.current = false
-    const buffered = sessionEventsRef.current.get(sessionId) || []
+    const buffered = sessionEventsRef.current.get(sessionId)?.sliceFrom(fromIndex) ?? []
     pendingEventsRef.current.length = 0
-    pendingEventsRef.current.push(...buffered.slice(fromIndex))
+    // push in slices: spreading a huge array can exceed the argument limit
+    for (let i = 0; i < buffered.length; i += 5000) pendingEventsRef.current.push(...buffered.slice(i, i + 5000))
   }, [])
 
   const getSessionEventCount = useCallback((sessionId: string): number => {
-    return sessionEventsRef.current.get(sessionId)?.length ?? 0
+    return sessionEventsRef.current.get(sessionId)?.end ?? 0
   }, [])
 
   const dismissedSessionsRef = useRef<Map<string, SessionInfo>>(new Map())

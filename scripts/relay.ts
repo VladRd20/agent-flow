@@ -10,6 +10,7 @@ import * as os from 'os'
 
 import { HookServer } from '../extension/src/hook-server'
 import { AgentEvent, SessionInfo, WatchedSession } from '../extension/src/protocol'
+import { SeqAssigner, resolveSince, firstIndexAfter } from './relay-seq'
 import { buildContextPayload } from '../extension/src/context-usage'
 import { TranscriptParser } from '../extension/src/transcript-parser'
 import { readNewFileLines, foldPathCase } from '../extension/src/fs-utils'
@@ -19,7 +20,7 @@ import { handlePermissionDetection } from '../extension/src/permission-detection
 import { CodexSessionWatcher } from '../extension/src/codex-session-watcher'
 import { filterHookEventForWatchedSession } from '../extension/src/subagent-event-filter'
 import {
-  INACTIVITY_TIMEOUT_MS, SCAN_INTERVAL_MS, ACTIVE_SESSION_AGE_S, POLL_FALLBACK_MS,
+  INACTIVITY_TIMEOUT_MS, ACTIVE_SESSION_AGE_S, POLL_FALLBACK_MS,
   SESSION_ID_DISPLAY, SYSTEM_PROMPT_BASE_TOKENS, ORCHESTRATOR_NAME,
   HOOK_SERVER_NOT_STARTED, WORKSPACE_HASH_LENGTH,
   SESSION_RETENTION_MS, SESSION_PRUNE_INTERVAL_MS, deriveAgentType,
@@ -31,7 +32,17 @@ const MAX_EVENT_BUFFER = 50000
 const MAX_BUFFERED_SESSIONS = 200
 const SSE_HEARTBEAT_MS = 25_000
 /** Drop SSE clients whose socket write buffer exceeds this (stalled/slow consumers). */
-const SSE_MAX_WRITABLE_BYTES = 16 * 1024 * 1024
+const SSE_MAX_WRITABLE_BYTES = 4 * 1024 * 1024
+/** Events per replay message, and how long a replaying client may stay blocked on a full socket. */
+const REPLAY_CHUNK_EVENTS = 500
+const REPLAY_DRAIN_TIMEOUT_MS = 30_000
+/** Random per-process id: seq numbers are only comparable within one epoch. */
+const BOOT_ID = crypto.randomUUID()
+const seqAssigner = new SeqAssigner()
+/** Session scan cadence; the project-dir watcher already triggers scans on new files. */
+const RELAY_SCAN_INTERVAL_MS = 5000
+/** Coalesce the several fs.watch change events Windows fires per write. */
+const WATCH_DEBOUNCE_MS = 75
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow')
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects')
 
@@ -97,6 +108,7 @@ const eventBuffer = new Map<string, AgentEvent[]>()
 
 function broadcastEvent(event: AgentEvent) {
   sessionEventCount++
+  if (event.sessionId) event = { ...event, seq: seqAssigner.next(event.sessionId) }
   if (event.type === 'model_detected') {
     const m = (event.payload as { model?: unknown } | undefined)?.model
     if (typeof m === 'string' && m.length > 0) observedModels.add(m)
@@ -133,6 +145,62 @@ function broadcastSessionLifecycle(type: 'started' | 'ended' | 'updated', sessio
     broadcast(JSON.stringify({ type: 'session-ended', sessionId }))
   } else if (type === 'updated') {
     broadcast(JSON.stringify({ type: 'session-updated', sessionId, label }))
+  }
+}
+
+// ─── SSE replay ─────────────────────────────────────────────────────────────
+
+/** Resolves when the socket's buffer drains, or false on close/timeout. */
+function waitForDrain(res: http.ServerResponse, isClosed: () => boolean): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (isClosed()) return resolve(false)
+    const timer = setTimeout(() => finish(false), REPLAY_DRAIN_TIMEOUT_MS)
+    const finish = (ok: boolean) => {
+      clearTimeout(timer)
+      res.off('drain', onDrain)
+      res.off('close', onClose)
+      resolve(ok)
+    }
+    const onDrain = () => finish(true)
+    const onClose = () => finish(false)
+    res.once('drain', onDrain)
+    res.once('close', onClose)
+  })
+}
+
+/** Stream events newer than `since` for the given sessions in bounded chunks.
+ *  Loops until a full pass finds nothing new, so the caller can add the client
+ *  to the live set synchronously afterwards with no gap. Returns false if the
+ *  client went away or stalled. */
+async function replayToClient(
+  res: http.ServerResponse,
+  sessionIds: string[],
+  since: Map<string, number>,
+  isClosed: () => boolean,
+): Promise<boolean> {
+  const cursor = new Map(since)
+  for (;;) {
+    let sentAny = false
+    for (const sid of sessionIds) {
+      const buf = eventBuffer.get(sid)
+      if (!buf) continue
+      let start = firstIndexAfter(buf, cursor.get(sid) ?? 0)
+      while (start < buf.length) {
+        const chunk = buf.slice(start, start + REPLAY_CHUNK_EVENTS)
+        cursor.set(sid, chunk[chunk.length - 1].seq ?? cursor.get(sid) ?? 0)
+        sentAny = true
+        let ok = true
+        try { ok = res.write(`data: ${JSON.stringify({ type: 'agent-event-batch', events: chunk })}\n\n`) } catch { return false }
+        if (!ok && !(await waitForDrain(res, isClosed))) {
+          if (!isClosed()) res.destroy()
+          return false
+        }
+        if (isClosed()) return false
+        // buffer may have been front-trimmed while we awaited: re-locate by seq
+        start = firstIndexAfter(buf, cursor.get(sid) ?? 0)
+      }
+    }
+    if (!sentAny) return true
   }
 }
 
@@ -267,8 +335,16 @@ function watchSession(sessionId: string, filePath: string) {
   emitContextUpdate(ORCHESTRATOR_NAME, session, sessionId)
   parser.emitCatchUpEntries(catchUpEntries, session, sessionId)
 
+  // Debounced: Windows fires several 'change' events per write; one read
+  // after the burst settles is enough. lastWatchEvent lets the fallback poll
+  // stand down while the watcher is demonstrably delivering events.
+  let debounce: NodeJS.Timeout | null = null
+  let lastWatchEvent = 0
   const watchTranscript = () => fs.watch(session.filePath, (eventType) => {
-    if (eventType === 'change') readNewLines(sessionId)
+    if (eventType !== 'change') return
+    lastWatchEvent = Date.now()
+    if (debounce) return
+    debounce = setTimeout(() => { debounce = null; readNewLines(sessionId) }, WATCH_DEBOUNCE_MS)
   })
   session.fileWatcher = watchTranscript()
 
@@ -279,11 +355,13 @@ function watchSession(sessionId: string, filePath: string) {
       session.fileWatcher?.close()
       try { session.fileWatcher = watchTranscript() } catch {}
     }
+    // Fallback only: skip the reads when fs.watch fired within the last interval.
+    if (Date.now() - lastWatchEvent < POLL_FALLBACK_MS) return
+    // readNewLines already rescans the subagents dir
     readNewLines(sessionId)
     for (const [subPath] of session.subagentWatchers) {
       readSubagentNewLines(watcherDelegate, parser, subPath, sessionId)
     }
-    scanSubagentsDir(watcherDelegate, parser, sessionId)
   }, POLL_FALLBACK_MS)
 
   session.subagentsDir = path.join(path.dirname(filePath), sessionId, 'subagents')
@@ -498,7 +576,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     writeDiscoveryFile(hookPort, workspace)
 
     scanForActiveSessions(workspace)
-    scanInterval = setInterval(() => scanForActiveSessions(workspace), SCAN_INTERVAL_MS)
+    scanInterval = setInterval(() => scanForActiveSessions(workspace), RELAY_SCAN_INTERVAL_MS)
     pruneInterval = setInterval(pruneOldSessions, SESSION_PRUNE_INTERVAL_MS)
 
     const resolved = (() => { try { return fs.realpathSync(workspace) } catch { return workspace } })()
@@ -565,17 +643,21 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
       })
+      // Tell EventSource how long to wait before reconnecting, then identify
+      // this server run: seq numbers are only comparable within one epoch.
+      res.write('retry: 3000\n\n')
+      sendSSE(res, { type: 'hello', epoch: BOOT_ID })
 
-      sseClients.add(res)
-      log(`[sse] Client connected (${sseClients.size} total)`)
-
+      let closed = false
       // Comment-line heartbeat keeps proxies/NAT from idling out the stream
       // and surfaces dead sockets via write errors.
       const heartbeat = setInterval(() => {
         try { res.write(': ping\n\n') } catch { cleanupClient() }
       }, SSE_HEARTBEAT_MS)
       const cleanupClient = () => {
+        closed = true
         clearInterval(heartbeat)
         if (sseClients.delete(res)) log(`[sse] Client disconnected (${sseClients.size} total)`)
       }
@@ -598,16 +680,19 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         sendSSE(res, { type: 'session-list', sessions: sessionList })
       }
 
-      // Replay buffered events for ALL known sessions, not just the most
-      // recently active one — otherwise subagent/session nodes belonging to
-      // other sessions never reappear after a reconnect (page refresh, or
-      // the browser's native EventSource auto-reconnect after a blip).
-      for (const session of sessionList) {
-        const buffered = eventBuffer.get(session.id)
-        if (buffered && buffered.length > 0) {
-          sendSSE(res, { type: 'agent-event-batch', events: buffered })
-        }
-      }
+      // Replay buffered events for ALL known sessions (not just the active one),
+      // but only those newer than the client's per-session cursor. The client
+      // sends `?epoch=<hello.epoch>&since=sid:seq,...`; a stale epoch means a
+      // relay restart, so it gets the full buffer. Written in chunks honouring
+      // backpressure; the client joins the live broadcast set only once it has
+      // caught up, so no event is skipped or delivered out of order.
+      let since = new Map<string, number>()
+      try { since = resolveSince(new URL(req.url ?? '/', 'http://localhost').searchParams, BOOT_ID) } catch { /* bad URL: full replay */ }
+      void replayToClient(res, sessionList.map(s => s.id), since, () => closed).then((ok) => {
+        if (!ok || closed) return
+        sseClients.add(res)
+        log(`[sse] Client connected (${sseClients.size} total)`)
+      })
     },
 
     dispose() {

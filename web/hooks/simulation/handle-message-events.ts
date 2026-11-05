@@ -38,7 +38,8 @@ export function handleMessage(
       const bubbleText = bubbleRole === 'thinking' ? content.slice(0, LABEL_LEN_BUBBLE) + (content.length > LABEL_LEN_BUBBLE ? '...' : '') : content
       // Dedup: skip if last bubble has the same text (dual event source race)
       const lastBubble = msgAgent.messageBubbles[msgAgent.messageBubbles.length - 1]
-      if (!lastBubble || lastBubble.text !== bubbleText) {
+      const bubbleExpired = state.visualCutoff !== undefined && currentTime < state.visualCutoff
+      if (!bubbleExpired && (!lastBubble || lastBubble.text !== bubbleText)) {
         const newBubbles = [...msgAgent.messageBubbles, { text: bubbleText, time: currentTime, role: bubbleRole }]
         updates.messageBubbles = newBubbles.length > MAX_BUBBLES ? newBubbles.slice(-MAX_BUBBLES) : newBubbles
       }

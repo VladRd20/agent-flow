@@ -122,3 +122,18 @@ describe('context_update tokens', () => {
     assert.ok(session.contextBreakdown.reasoning < 500)
   })
 })
+
+describe('iterateFileLines', () => {
+  it('yields the same lines as a whole-file split, across tiny chunks and multi-byte text', async () => {
+    const { iterateFileLines } = await import('../src/fs-utils')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-flow-lines-'))
+    const file = path.join(dir, 'f.jsonl')
+    const text = ['{"a":"héllo wörld ✓"}', '', '{"b":"日本語"}', 'last-without-newline'].join('\r\n')
+    fs.writeFileSync(file, text)
+    const size = Buffer.byteLength(text)
+    for (const chunk of [1, 3, 7, 64, 4096]) {
+      const got = [...iterateFileLines(file, size, chunk)]
+      assert.deepEqual(got.filter(l => l.trim()), text.split(/\r?\n/).filter(l => l.trim()), `chunk=${chunk}`)
+    }
+  })
+})

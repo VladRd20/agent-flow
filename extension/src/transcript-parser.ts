@@ -11,7 +11,7 @@ import {
   TranscriptEntry, ToolUseBlock, ToolResultBlock,
   emitSubagentSpawn,
 } from './protocol'
-import { readFileChunk } from './fs-utils'
+import { iterateFileLines } from './fs-utils'
 import {
   PREVIEW_MAX, ARGS_MAX, RESULT_MAX, MESSAGE_MAX,
   SESSION_LABEL_MAX, SESSION_LABEL_TRUNCATED,
@@ -617,8 +617,7 @@ export class TranscriptParser {
       // Read only up to `size` bytes — the file may have grown since stat.
       // Reading beyond would add tool_use IDs to the dedup set that haven't
       // been accounted for in fileSize, causing readNewLines to silently skip them.
-      const content = readFileChunk(filePath, 0, size)
-      for (const line of content.split(/\r?\n/)) {
+      for (const line of iterateFileLines(filePath, size)) {
         if (!line.trim()) { continue }
         try {
           const entry = JSON.parse(line.trim()) as TranscriptEntry & { toolUseResult?: unknown }

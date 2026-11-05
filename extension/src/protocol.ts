@@ -28,6 +28,8 @@ export interface AgentEvent {
   type: AgentEventType
   payload: Record<string, unknown>
   sessionId?: string
+  /** Per-session monotonically increasing sequence number, stamped by the SSE relay. */
+  seq?: number
 }
 
 export interface SessionInfo {

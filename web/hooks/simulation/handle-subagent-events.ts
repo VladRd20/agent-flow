@@ -12,6 +12,7 @@ export function handleSubagentDispatch(
   const eid = edgeId(parentName, childName)
   const task = asString(payload.task)
 
+  if (state.visualCutoff !== undefined && currentTime < state.visualCutoff) return
   state.particles.push({
     id: `p-disp-${currentTime}-${eid}`,
     edgeId: eid, progress: 0,
@@ -31,6 +32,7 @@ export function handleSubagentReturn(
   const eid = edgeId(parentName, childName)
   const summary = asString(payload.summary)
 
+  if (state.visualCutoff !== undefined && currentTime < state.visualCutoff) return
   state.particles.push({
     id: `p-ret-${currentTime}-${eid}`,
     edgeId: eid, progress: 1,

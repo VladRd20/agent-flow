@@ -30,6 +30,13 @@ export interface MutableEventState {
   fileAttention: SimulationState['fileAttention']
   timelineEntries: SimulationState['timelineEntries']
   conversations: Map<string, ConversationMessage[]>
+  /** When set (historical batch folds), visuals (tool cards, particles, bubbles)
+   *  for events with time < visualCutoff are skipped — they would already have
+   *  faded out by the end of the batch. Non-visual state is still updated. */
+  visualCutoff?: number
+  /** tool_use_id -> call info for tool starts whose visuals were skipped, so the
+   *  matching tool_end can still attribute file-attention token cost. */
+  skippedTools?: Map<string, { args: string; inputData?: Record<string, unknown> }>
 }
 
 /** Close the last open block on a timeline entry and push a new one. */
@@ -58,41 +65,90 @@ function mapsEqual<K, V>(a: Map<K, V>, b: Map<K, V>): boolean {
   return true
 }
 
+/** Apply one event to already-copied mutable collections. */
+export function applyEvent(event: SimulationEvent, currentTime: number, state: MutableEventState, ctx: ProcessEventContext): void {
+  switch (event.type) {
+    case 'agent_spawn':       handleAgentSpawn(event.payload, currentTime, state, ctx); break
+    case 'agent_complete':    handleAgentComplete(event.payload, currentTime, state, ctx); break
+    case 'agent_idle':        handleAgentIdle(event.payload, state); break
+    case 'model_detected':    handleModelDetected(event.payload, state, ctx); break
+    case 'tool_call_start':   handleToolCallStart(event.payload, currentTime, state, ctx); break
+    case 'tool_call_end':     handleToolCallEnd(event.payload, currentTime, state, ctx); break
+    case 'message':           handleMessage(event.payload, currentTime, state); break
+    case 'context_update':    handleContextUpdate(event.payload, state); break
+    case 'subagent_dispatch': handleSubagentDispatch(event.payload, currentTime, state); break
+    case 'subagent_return':   handleSubagentReturn(event.payload, currentTime, state); break
+    case 'permission_requested': handlePermissionRequested(event.payload, currentTime, state, ctx); break
+  }
+}
+
+function copyCollections(prev: SimulationState): MutableEventState {
+  return {
+    agents: new Map(prev.agents),
+    toolCalls: new Map(prev.toolCalls),
+    particles: [...prev.particles],
+    edges: [...prev.edges],
+    discoveries: [...prev.discoveries],
+    fileAttention: new Map(prev.fileAttention),
+    timelineEntries: new Map(prev.timelineEntries),
+    conversations: new Map(prev.conversations),
+  }
+}
+
+function withCollections(prev: SimulationState, state: MutableEventState): SimulationState {
+  // Stabilize references for unchanged collections to prevent
+  // downstream React useMemo/re-render cascades (O(n log n) sorts etc.)
+  return {
+    ...prev,
+    agents: state.agents, toolCalls: state.toolCalls,
+    particles: state.particles, edges: state.edges,
+    discoveries: state.discoveries,
+    fileAttention: mapsEqual(prev.fileAttention, state.fileAttention) ? prev.fileAttention : state.fileAttention,
+    timelineEntries: mapsEqual(prev.timelineEntries, state.timelineEntries) ? prev.timelineEntries : state.timelineEntries,
+    conversations: mapsEqual(prev.conversations, state.conversations) ? prev.conversations : state.conversations,
+  }
+}
+
 export function processEvent(event: SimulationEvent, prev: SimulationState, ctx: ProcessEventContext): SimulationState {
-      const state: MutableEventState = {
-        agents: new Map(prev.agents),
-        toolCalls: new Map(prev.toolCalls),
-        particles: [...prev.particles],
-        edges: [...prev.edges],
-        discoveries: [...prev.discoveries],
-        fileAttention: new Map(prev.fileAttention),
-        timelineEntries: new Map(prev.timelineEntries),
-        conversations: new Map(prev.conversations),
-      }
+  const state = copyCollections(prev)
+  applyEvent(event, prev.currentTime, state, ctx)
+  return withCollections(prev, state)
+}
 
-      switch (event.type) {
-        case 'agent_spawn':       handleAgentSpawn(event.payload, prev.currentTime, state, ctx); break
-        case 'agent_complete':    handleAgentComplete(event.payload, prev.currentTime, state, ctx); break
-        case 'agent_idle':        handleAgentIdle(event.payload, state); break
-        case 'model_detected':    handleModelDetected(event.payload, state, ctx); break
-        case 'tool_call_start':   handleToolCallStart(event.payload, prev.currentTime, state, ctx); break
-        case 'tool_call_end':     handleToolCallEnd(event.payload, prev.currentTime, state, ctx); break
-        case 'message':           handleMessage(event.payload, prev.currentTime, state); break
-        case 'context_update':    handleContextUpdate(event.payload, state); break
-        case 'subagent_dispatch': handleSubagentDispatch(event.payload, prev.currentTime, state); break
-        case 'subagent_return':   handleSubagentReturn(event.payload, prev.currentTime, state); break
-        case 'permission_requested': handlePermissionRequested(event.payload, prev.currentTime, state, ctx); break
-      }
+/** Seconds of event history that can still be visible on screen (tool cards
+ *  run + fade, bubbles, particles). Events older than batchEnd minus this are
+ *  folded without creating visuals. */
+export const VISUAL_LIFETIME_S = 15
 
-      // Stabilize references for unchanged collections to prevent
-      // downstream React useMemo/re-render cascades (O(n log n) sorts etc.)
-      return {
-        ...prev,
-        agents: state.agents, toolCalls: state.toolCalls,
-        particles: state.particles, edges: state.edges,
-        discoveries: state.discoveries,
-        fileAttention: mapsEqual(prev.fileAttention, state.fileAttention) ? prev.fileAttention : state.fileAttention,
-        timelineEntries: mapsEqual(prev.timelineEntries, state.timelineEntries) ? prev.timelineEntries : state.timelineEntries,
-        conversations: mapsEqual(prev.conversations, state.conversations) ? prev.conversations : state.conversations,
-      }
+/** Batches smaller than this are folded with full visuals (live trickle). */
+export const HISTORICAL_BATCH_MIN = 50
+
+/**
+ * Fold many events with ONE copy of the state collections (processEvent copies
+ * all 8 per call, O(state) per event). `resolveTime` gives each event's
+ * simulation time; the result is identical to calling processEvent one event
+ * at a time with currentTime set to that time, except that purely visual
+ * artifacts (tool cards/edges, particles, bubbles) older than `visualCutoff`
+ * are skipped. Returns the new state plus the time-stamped events applied.
+ */
+export function foldEvents(
+  events: readonly SimulationEvent[],
+  prev: SimulationState,
+  ctx: ProcessEventContext,
+  opts: { resolveTime: (event: SimulationEvent) => number; visualCutoff?: number },
+): { state: SimulationState; applied: SimulationEvent[] } {
+  if (events.length === 0) return { state: prev, applied: [] }
+  const state = copyCollections(prev)
+  state.visualCutoff = opts.visualCutoff
+  state.skippedTools = new Map()
+  const applied: SimulationEvent[] = []
+  let currentTime = prev.currentTime
+  for (const event of events) {
+    currentTime = opts.resolveTime(event)
+    applyEvent(event, currentTime, state, ctx)
+    applied.push({ ...event, time: currentTime })
+  }
+  state.visualCutoff = undefined
+  state.skippedTools = undefined
+  return { state: { ...withCollections(prev, state), currentTime }, applied }
 }

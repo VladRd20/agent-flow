@@ -69,6 +69,10 @@ export function handleToolCallStart(
 
     const toolId = `tool-${agentName}-${toolName}-${currentTime}`
 
+    // Historical batch fold: card would already have faded — skip its visuals
+    const skipVisuals = toolUseId !== undefined && state.visualCutoff !== undefined && currentTime < state.visualCutoff
+    if (skipVisuals) state.skippedTools?.set(toolUseId, { args, inputData })
+    if (!skipVisuals) {
     const pos = ctx.findToolSlot(agent, state.agents, state.toolCalls, currentTime)
 
     state.toolCalls.set(toolId, {
@@ -92,6 +96,7 @@ export function handleToolCallStart(
       size: 4, trailLength: 0.15,
       label: `${toolName} ${args}`.slice(0, LABEL_LEN_PARTICLE),
     })
+    }
 
     // Timeline block
     const entry = state.timelineEntries.get(agentName)
@@ -189,6 +194,14 @@ export function handleToolCallEnd(
         size: 4, trailLength: 0.15,
         label: result.slice(0, LABEL_LEN_PARTICLE),
       })
+    }
+
+    if (!completedTc && toolUseId) {
+      const skipped = state.skippedTools?.get(toolUseId)
+      if (skipped) {
+        completedTc = { args: skipped.args, inputData: skipped.inputData } as ToolCallNode
+        state.skippedTools!.delete(toolUseId)
+      }
     }
 
     // Timeline block end

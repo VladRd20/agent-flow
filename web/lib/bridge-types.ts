@@ -11,6 +11,8 @@ export interface AgentEvent {
   type: string
   payload: Record<string, unknown>
   sessionId?: string
+  /** Per-session sequence number stamped by the SSE relay (absent on the VS Code path). */
+  seq?: number
 }
 
 export interface SessionInfo {
