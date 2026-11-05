@@ -5,6 +5,7 @@
 import * as http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
+import { FAVICON_LINK_TAGS } from './favicon'
 
 const WEBVIEW_DIR = path.join(__dirname, 'webview')
 
@@ -19,6 +20,7 @@ const HTML_SHELL = `<!DOCTYPE html>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Agent Flow</title>
+  ${FAVICON_LINK_TAGS}
   <link rel="stylesheet" href="/index.css">
   <style>html, body { height: 100%; margin: 0; padding: 0; background: #0a0a1a; } body { position: fixed; inset: 0; overflow: hidden; }</style>
 </head>

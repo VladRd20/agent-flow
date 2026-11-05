@@ -14,6 +14,7 @@
  */
 import * as crypto from 'crypto'
 import type * as http from 'http'
+import { FAVICON_LINK_TAGS } from './favicon'
 
 export const SESSION_COOKIE = 'af_session'
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -82,7 +83,7 @@ function wantsHtml(req: http.IncomingMessage): boolean {
   return /text\/html/.test(String(req.headers.accept || ''))
 }
 
-const LOGIN_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+const LOGIN_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 function loginPage(error?: string): string {
   return `<!doctype html>
@@ -90,6 +91,7 @@ function loginPage(error?: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Agent Flow · Sign in</title>
+${FAVICON_LINK_TAGS}
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0d12;
