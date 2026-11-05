@@ -23,6 +23,7 @@ import { COLORS } from "@/lib/colors"
 import { MOCK_DURATION } from "@/lib/mock-scenario"
 import { MessageFeedPanel } from "./message-feed-panel"
 import { TopBar } from "./top-bar"
+import { useIsMobile } from "@/hooks/use-is-mobile"
 import { useAudioEffects } from "@/hooks/use-audio-effects"
 
 export function AgentVisualizer() {
@@ -217,6 +218,10 @@ export function AgentVisualizer() {
   }, [agents])
 
   const selectedAgent = selection.selectedAgentId ? agents.get(selection.selectedAgentId) : null
+  // On phones, sheets (files / transcript / timeline / agent detail+chat) take over the bottom,
+  // so the control bar steps out of the way instead of stacking under them.
+  const isMobile = useIsMobile()
+  const mobileSheetOpen = isMobile && (showFileAttention || showTranscript || showTimeline || !!selectedAgent)
   const selectedConversation = selection.selectedAgentId ? (conversations.get(selection.selectedAgentId) || []) : []
 
   // Session runtime — drives the assistant label (CLAUDE vs CODEX) in transcript panels
@@ -272,7 +277,7 @@ export function AgentVisualizer() {
 
   return (
     <OpenFileProvider value={bridge.isVSCode ? openFile : null}>
-    <div className="h-screen w-screen relative overflow-hidden" style={{ background: COLORS.void }}>
+    <div className="af-root relative overflow-hidden" style={{ background: COLORS.void }}>
       {/* Empty state when no demo and no live data */}
       {isEmpty && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
@@ -385,6 +390,7 @@ export function AgentVisualizer() {
         timelineEvents={timelineEvents}
         isReviewing={isReviewing}
         eventCount={timelineEvents.length}
+        hidden={mobileSheetOpen}
         onEnterReview={handleEnterReview}
         onResumeLive={handleResumeLive}
       />

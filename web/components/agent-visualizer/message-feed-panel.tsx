@@ -5,6 +5,7 @@ import { Agent, Z } from '@/lib/agent-types'
 import { COLORS, ROLE_COLORS, getStateColor } from '@/lib/colors'
 import type { ConversationMessage } from '@/hooks/simulation/types'
 import { useClickOutside } from '@/hooks/use-click-outside'
+import { useEscapeKey } from '@/hooks/use-escape-key'
 import { useVirtualList } from '@/hooks/use-virtual-list'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 
@@ -180,6 +181,7 @@ export function MessageFeedPanel({
   const panelRef = useRef<HTMLDivElement>(null)
   const collapsePanel = useCallback(() => setExpanded(false), [])
   useClickOutside(panelRef, collapsePanel)
+  useEscapeKey(collapsePanel, expanded)
 
   if (!latestMessage && agentsWithMessages.length === 0) return null
 
@@ -191,23 +193,46 @@ export function MessageFeedPanel({
     const role = ROLE_COLORS[latestMessage.type] ?? ROLE_COLORS.assistant
     const preview = latestMessage.content.replace(/\n/g, ' ').slice(0, PREVIEW_MAX)
 
+    const stateText = agent?.state ? agent.state.charAt(0).toUpperCase() + agent.state.slice(1) : role.label
+
     return (
-      <div
-        className="absolute cursor-pointer transition-all hover:scale-[1.02]"
-        style={{ top: 48, left: 12, zIndex: Z.info, pointerEvents: 'auto' }}
+      <button
+        type="button"
+        aria-expanded={false}
+        aria-label={`Show messages. Latest from ${agentName}`}
+        className="af-hit absolute text-left cursor-pointer transition-all hover:scale-[1.02]"
+        style={{
+          top: 'var(--af-feed-top)',
+          left: 'var(--af-left)',
+          zIndex: Z.info,
+          pointerEvents: 'auto',
+          maxWidth: isMobile ? 'calc(100% - var(--af-left) - var(--af-right))' : undefined,
+        }}
         onClick={() => setExpanded(true)}
       >
-        <div className="glass-card px-3 py-2 flex items-center gap-2" style={{ maxWidth: isMobile ? 'calc(100vw - 24px)' : 320 }}>
+        <div
+          className="glass-card px-3 py-2 flex items-center gap-2 min-w-0"
+          style={{ maxWidth: isMobile ? '100%' : 320, minHeight: isMobile ? 36 : undefined }}
+        >
           <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: role.text }} />
-          <span className="text-[9px] font-mono font-semibold shrink-0" style={{ color: COLORS.textPrimary }}>
-            {agentName.length > COLLAPSED_AGENT_NAME_MAX ? agentName.slice(0, COLLAPSED_AGENT_NAME_MAX) + '..' : agentName}
-          </span>
-          <span className="text-[9px] font-mono truncate" style={{ color: role.text + 'cc' }}>
-            {preview}{latestMessage.content.length > PREVIEW_MAX ? '...' : ''}
-          </span>
-          <span className="text-[9px] shrink-0" style={{ color: COLORS.textMuted }}>▾</span>
+          {isMobile ? (
+            <span className="text-xs font-mono truncate min-w-0 whitespace-nowrap">
+              <span className="font-semibold" style={{ color: COLORS.textPrimary }}>{agentName}</span>
+              <span style={{ color: role.text + 'cc' }}> · {stateText}</span>
+            </span>
+          ) : (
+            <>
+              <span className="text-[9px] font-mono font-semibold shrink-0" style={{ color: COLORS.textPrimary }}>
+                {agentName.length > COLLAPSED_AGENT_NAME_MAX ? agentName.slice(0, COLLAPSED_AGENT_NAME_MAX) + '..' : agentName}
+              </span>
+              <span className="text-[9px] font-mono truncate" style={{ color: role.text + 'cc' }}>
+                {preview}{latestMessage.content.length > PREVIEW_MAX ? '...' : ''}
+              </span>
+            </>
+          )}
+          <span className="text-[9px] shrink-0" style={{ color: COLORS.textMuted }} aria-hidden="true">▾</span>
         </div>
-      </div>
+      </button>
     )
   }
 
@@ -215,19 +240,38 @@ export function MessageFeedPanel({
   return (
     <div
       ref={panelRef}
-      className="absolute"
-      style={{ top: 48, left: 12, zIndex: Z.info, pointerEvents: 'auto' }}
+      role="region"
+      aria-label="Messages"
+      className="absolute af-selectable"
+      style={{
+        top: 'var(--af-feed-top)',
+        left: 'var(--af-left)',
+        right: isMobile ? 'var(--af-right)' : undefined,
+        zIndex: Z.info,
+        pointerEvents: 'auto',
+      }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="glass-card flex flex-col" style={{ width: isMobile ? 'calc(100vw - 24px)' : 320, maxHeight: isMobile ? '60vh' : 420 }}>
+      <div
+        className="glass-card flex flex-col"
+        style={{
+          width: isMobile ? '100%' : 320,
+          maxHeight: isMobile
+            ? 'min(60dvh, calc(100dvh - var(--af-feed-top) - var(--af-above-bar)))'
+            : 420,
+        }}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <span className="text-[10px] font-mono font-semibold tracking-wider" style={{ color: COLORS.textPrimary }}>
             MESSAGES
           </span>
           <button
+            type="button"
+            aria-expanded={true}
+            aria-label="Collapse messages"
             onClick={() => setExpanded(false)}
-            className="text-[9px] transition-colors"
+            className="af-hit text-[9px] px-2 py-1 transition-colors"
             style={{ color: COLORS.textMuted }}
           >
             ▴
@@ -236,7 +280,7 @@ export function MessageFeedPanel({
 
         {/* Agent Tabs (hidden when only 1 agent) */}
         {agentsWithMessages.length > 1 && (
-        <div className="flex gap-0.5 px-2 pb-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        <div role="tablist" aria-label="Agents" className="flex gap-0.5 px-2 pb-1.5 overflow-x-auto overscroll-x-contain" style={{ scrollbarWidth: 'none' }}>
           <TabButton
             label="All"
             active={activeTab === 'all'}
@@ -265,8 +309,8 @@ export function MessageFeedPanel({
         <div
           ref={logRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-2 pb-2"
-          style={{ maxHeight: 340, scrollbarWidth: 'thin', scrollbarColor: `${COLORS.scrollbarThumb} transparent` }}
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 pb-2"
+          style={{ maxHeight: isMobile ? undefined : 340, scrollbarWidth: 'thin', scrollbarColor: `${COLORS.scrollbarThumb} transparent` }}
         >
           {messages.length === 0 ? (
             <div className="flex items-center justify-center py-6">
@@ -313,8 +357,11 @@ function TabButton({ label, active, onClick, color, hasUnread }: {
 }) {
   return (
     <button
+      type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      className="px-2 py-0.5 rounded text-[9px] font-mono transition-all shrink-0 relative"
+      className="af-hit px-2 py-0.5 rounded text-[9px] font-mono transition-all shrink-0 relative"
       style={{
         background: active ? color + '20' : 'transparent',
         color: active ? color : COLORS.textMuted,

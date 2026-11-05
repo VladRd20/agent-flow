@@ -7,6 +7,7 @@ import { TranscriptMessage } from './transcript-message'
 import type { ConversationMessage } from '@/hooks/simulation/types'
 import { CloseButton, SlidingPanel, stopPropagationHandlers } from './shared-ui'
 import { useVirtualList } from '@/hooks/use-virtual-list'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ export function SessionTranscriptPanel({
   runtime,
   onClose,
 }: TranscriptPanelProps) {
+  const isMobile = useIsMobile()
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -64,16 +66,22 @@ export function SessionTranscriptPanel({
       visible={visible}
       position={{ right: 0, bottom: 0, top: 36 }}
       zIndex={Z.transcriptPanel}
+      mobileZIndex={Z.sheet}
       width={CARD.transcript.width}
-      // Mobile: full-width panel instead of a fixed 380px sidebar
+      label="Session transcript"
+      onDismiss={onClose}
+      // Mobile: full-width sheet below the top bar instead of a fixed 380px sidebar
+      mobilePosition={{ top: 'var(--af-sheet-top)', left: 0, right: 0, bottom: 0 }}
       mobileWidth="100%"
       {...stopPropagationHandlers}
     >
       <div
-        className="h-full flex flex-col"
+        className={`h-full flex flex-col af-selectable ${isMobile ? 'af-sheet' : ''}`}
         style={{
           background: COLORS.panelBg,
-          backdropFilter: 'blur(24px)',
+          backdropFilter: isMobile ? 'blur(10px)' : 'blur(24px)',
+          WebkitBackdropFilter: isMobile ? 'blur(10px)' : 'blur(24px)',
+          borderRadius: isMobile ? '12px 12px 0 0' : undefined,
           borderLeft: `1px solid ${COLORS.holoBorder10}`,
         }}
       >
@@ -92,8 +100,11 @@ export function SessionTranscriptPanel({
           </div>
           <div className="flex items-center gap-1">
             <button
+              type="button"
+              aria-label="Filter messages"
+              aria-pressed={showSearch}
               onClick={() => { setShowSearch(s => !s); if (showSearch) setSearchQuery('') }}
-              className="text-[9px] font-mono px-1.5 py-0.5 rounded transition-all"
+              className="af-hit text-[9px] font-mono px-1.5 py-0.5 rounded transition-all"
               style={{
                 background: showSearch ? COLORS.toggleActive : 'transparent',
                 color: showSearch ? COLORS.assistantText : COLORS.textMuted,
@@ -110,7 +121,12 @@ export function SessionTranscriptPanel({
           <div className="px-3 pb-2 flex-shrink-0" style={{ borderBottom: `1px solid ${COLORS.holoBorder06}` }}>
             <input
               ref={searchRef}
-              type="text"
+              type="search"
+              enterKeyHint="search"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-label="Filter messages"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -132,7 +148,7 @@ export function SessionTranscriptPanel({
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-3 py-2"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-2"
           style={{ scrollbarWidth: 'thin', scrollbarColor: `${COLORS.scrollbarThumb} transparent` }}
         >
           {filteredConversation.length === 0 ? (
@@ -162,8 +178,9 @@ export function SessionTranscriptPanel({
         {!isAtBottom && filteredConversation.length > 0 && (
           <div className="flex justify-center py-1 flex-shrink-0" style={{ borderTop: `1px solid ${COLORS.holoBorder06}` }}>
             <button
+              type="button"
               onClick={scrollToBottom}
-              className="text-[9px] font-mono px-3 py-1 rounded-full transition-all"
+              className="af-hit text-[9px] font-mono px-3 py-1 rounded-full transition-all"
               style={{
                 background: COLORS.holoBg10,
                 border: `1px solid ${COLORS.glassBorder}`,

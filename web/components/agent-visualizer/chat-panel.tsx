@@ -33,21 +33,26 @@ export function AgentChatPanel({
   return (
     <SlidingPanel
       visible={visible}
-      position={{ bottom: 64, right: 12 }}
+      position={{ bottom: 'calc(var(--af-above-bar) - 8px)', right: 'var(--af-right)' }}
       zIndex={Z.chatPanel}
+      mobileZIndex={Z.sheet}
       width={CARD.chat.width}
-      // Mobile: bottom sheet spanning full width instead of a floating card
-      mobilePosition={{ bottom: 0, left: 0, right: 0 }}
+      label={`${agentName} conversation`}
+      // Mobile: bottom sheet spanning full width instead of a floating card.
+      // Sits above the agent detail sheet (--af-detail-h) when both are open.
+      mobilePosition={{ bottom: 'var(--af-detail-h)', left: 0, right: 0 }}
       mobileWidth="100%"
       mobileAxis="Y"
       {...stopPropagationHandlers}
     >
       <div
-        className="glass-card"
+        className={`glass-card af-selectable ${isMobile ? 'af-sheet' : ''}`}
         style={{
           display: 'flex',
           flexDirection: 'column',
-          maxHeight: isMobile ? '70vh' : CARD.chat.maxHeight,
+          maxHeight: isMobile
+            ? 'min(70dvh, calc(100dvh - var(--af-sheet-top) - var(--af-detail-h)))'
+            : CARD.chat.maxHeight,
           borderRadius: isMobile ? '12px 12px 0 0' : undefined,
         }}
       >
@@ -67,10 +72,10 @@ export function AgentChatPanel({
         {/* Messages */}
         <div
           ref={logRef}
-          className="flex-1 overflow-y-auto space-y-1.5 mb-2"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1.5 mb-2"
           style={{
-            minHeight: CARD.chat.messagesMinHeight,
-            maxHeight: isMobile ? 'calc(70vh - 60px)' : CARD.chat.messagesMaxHeight,
+            minHeight: isMobile ? 80 : CARD.chat.messagesMinHeight,
+            maxHeight: isMobile ? undefined : CARD.chat.messagesMaxHeight,
           }}
         >
           {conversation.length === 0 ? (

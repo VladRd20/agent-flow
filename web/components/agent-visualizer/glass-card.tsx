@@ -8,9 +8,13 @@ interface GlassCardProps {
   className?: string
   style?: React.CSSProperties
   visible: boolean
+  /** Ref to the rendered card element (for measuring) */
+  innerRef?: React.Ref<HTMLDivElement>
+  role?: string
+  'aria-label'?: string
 }
 
-export function GlassCard({ children, className = '', style, visible }: GlassCardProps) {
+export function GlassCard({ children, className = '', style, visible, innerRef, role, 'aria-label': ariaLabel }: GlassCardProps) {
   const [mounted, setMounted] = useState(false)
   const [animating, setAnimating] = useState(false)
 
@@ -30,6 +34,9 @@ export function GlassCard({ children, className = '', style, visible }: GlassCar
 
   return (
     <div
+      ref={innerRef}
+      role={role}
+      aria-label={ariaLabel}
       className={`glass-card ${className}`}
       style={{
         ...style,

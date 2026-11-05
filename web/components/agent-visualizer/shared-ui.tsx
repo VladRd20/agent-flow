@@ -5,6 +5,7 @@ import { Z } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { useClickOutside } from '@/hooks/use-click-outside'
 import { useIsMobile } from '@/hooks/use-is-mobile'
+import { useEscapeKey } from '@/hooks/use-escape-key'
 import { clampPopupPosition } from '@/lib/clamp-popup-position'
 import { GlassCard } from './glass-card'
 
@@ -22,13 +23,16 @@ export const stopPropagationHandlers = {
 interface CloseButtonProps {
   onClick: () => void
   className?: string
+  label?: string
 }
 
-export function CloseButton({ onClick, className = '' }: CloseButtonProps) {
+export function CloseButton({ onClick, className = '', label = 'Close' }: CloseButtonProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`text-xs transition-colors ${className}`}
+      aria-label={label}
+      className={`af-hit text-xs transition-colors px-1.5 py-0.5 ${className}`}
       style={{ color: COLORS.textMuted }}
     >
       ✕
@@ -75,10 +79,13 @@ export function DetailPopup({ position, width, estimatedHeight, onClose, childre
   const { left, top } = clampPopupPosition(position, width, estimatedHeight)
 
   useClickOutside(ref, onClose)
+  useEscapeKey(onClose)
 
   return (
     <div
       ref={ref}
+      role="dialog"
+      aria-label="Details"
       {...stopPropagationHandlers}
       style={{ position: 'absolute', left, top, width, zIndex: Z.detailCard }}
     >
@@ -116,12 +123,21 @@ interface SlidingPanelProps {
   mobileStyle?: React.CSSProperties
   /** Slide axis to use on mobile only; defaults to `axis` when omitted (desktop unaffected). */
   mobileAxis?: 'X' | 'Y'
+  /** z-index to use on mobile only (sheets sit above the control bar) */
+  mobileZIndex?: number
+  /** Accessible name; renders the panel as role="dialog" */
+  label?: string
+  /** Closes the panel on Escape; on mobile also renders a tap-to-close backdrop behind it */
+  onDismiss?: () => void
+  /** Render the dimming backdrop on mobile (default true when onDismiss is given) */
+  mobileBackdrop?: boolean
 }
 
 export function SlidingPanel({
   visible, position, axis = 'X', offset = 20,
   zIndex, width, className = '', style, children,
   mobilePosition, mobileWidth, mobileClassName, mobileStyle, mobileAxis,
+  mobileZIndex, label, onDismiss, mobileBackdrop = true,
 }: SlidingPanelProps) {
   const isMobile = useIsMobile()
   const useMobileOverrides = isMobile && (mobilePosition || mobileWidth !== undefined || mobileClassName || mobileStyle || mobileAxis)
@@ -130,22 +146,38 @@ export function SlidingPanel({
   const effectiveClassName = useMobileOverrides && mobileClassName ? `${className} ${mobileClassName}` : className
   const effectiveStyle = useMobileOverrides && mobileStyle ? { ...style, ...mobileStyle } : style
   const effectiveAxis = useMobileOverrides && mobileAxis ? mobileAxis : axis
+  const effectiveZ = isMobile && mobileZIndex !== undefined ? mobileZIndex : zIndex
+
+  useEscapeKey(() => onDismiss?.(), visible && !!onDismiss)
 
   return (
-    <div
-      className={`absolute transition-all duration-300 ${effectiveClassName}`}
-      style={{
-        ...effectivePosition,
-        opacity: visible ? 1 : 0,
-        transform: `translate${effectiveAxis}(${visible ? 0 : offset}px)`,
-        pointerEvents: visible ? 'auto' : 'none',
-        zIndex,
-        width: effectiveWidth,
-        ...effectiveStyle,
-      }}
-    >
-      {children}
-    </div>
+    <>
+      {isMobile && visible && onDismiss && mobileBackdrop && (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{ zIndex: Z.sheetBackdrop, background: 'rgba(4, 6, 16, 0.55)', touchAction: 'none' }}
+          onClick={onDismiss}
+        />
+      )}
+      <div
+        role={label ? 'dialog' : undefined}
+        aria-label={label}
+        aria-hidden={visible ? undefined : true}
+        className={`absolute transition-all duration-300 ${effectiveClassName}`}
+        style={{
+          ...effectivePosition,
+          opacity: visible ? 1 : 0,
+          transform: `translate${effectiveAxis}(${visible ? 0 : offset}px)`,
+          pointerEvents: visible ? 'auto' : 'none',
+          zIndex: effectiveZ,
+          width: effectiveWidth,
+          ...effectiveStyle,
+        }}
+      >
+        {children}
+      </div>
+    </>
   )
 }
 

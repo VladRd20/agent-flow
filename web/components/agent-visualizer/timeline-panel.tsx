@@ -222,9 +222,12 @@ export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }
   return (
     <SlidingPanel
       visible={visible}
-      position={{ bottom: 72, left: 16, right: 16 }}
+      position={{ bottom: 'var(--af-above-bar)', left: 'var(--af-edge-left)', right: 'var(--af-edge-right)' }}
       axis="Y"
       zIndex={Z.sidePanel}
+      mobileZIndex={Z.sheet}
+      label="Execution timeline"
+      onDismiss={onClose}
       className="mx-auto"
       style={{ maxWidth: 700 }}
       // Mobile: full-width bottom sheet with more vertical room
@@ -232,14 +235,14 @@ export function TimelinePanel({ visible, timelineEntries, currentTime, onClose }
       mobileWidth="100%"
       mobileStyle={{ maxWidth: '100%' }}
     >
-      <div className="glass-card relative" style={isMobile ? { borderRadius: '12px 12px 0 0' } : undefined}>
+      <div className={`glass-card relative ${isMobile ? 'af-sheet' : ''}`} style={isMobile ? { borderRadius: '12px 12px 0 0' } : undefined}>
         <PanelHeader onClose={onClose}>
           <span className="text-[10px] font-mono tracking-wider" style={{ color: COLORS.textPrimary }}>
             EXECUTION TIMELINE
           </span>
         </PanelHeader>
 
-        <div className="overflow-auto" style={{ maxHeight: isMobile ? '50vh' : 300 }}>
+        <div className="overflow-auto" style={{ maxHeight: isMobile ? 'min(50dvh, 50vh)' : 300 }}>
           <canvas ref={canvasRef} style={{ display: 'block' }} onMouseMove={handleMouseMove} />
         </div>
 

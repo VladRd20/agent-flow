@@ -1,6 +1,8 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { CARD, Z, type AgentState } from '@/lib/agent-types'
+import { useIsMobile } from '@/hooks/use-is-mobile'
 import { COLORS, getStateColor } from '@/lib/colors'
 import { formatTokens, formatModelName } from '@/lib/utils'
 import { GlassCard } from './glass-card'
@@ -28,21 +30,69 @@ export function AgentDetailCard({
   const contextPercent = Math.round((agent.tokensUsed / agent.tokensMax) * 100)
   const stateColor = getStateColor(agent.state)
 
-  // Fixed position: middle-left of the screen (below message feed panel)
+  const isMobile = useIsMobile()
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  // Track the viewport height so the card re-centers on resize / rotation
+  const [viewportH, setViewportH] = useState(() => typeof window !== 'undefined' ? window.innerHeight : 600)
+  useEffect(() => {
+    const update = () => setViewportH(window.visualViewport?.height ?? window.innerHeight)
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('orientationchange', update)
+    window.visualViewport?.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('orientationchange', update)
+      window.visualViewport?.removeEventListener('resize', update)
+    }
+  }, [])
+
+  // Mobile: publish the sheet's height so the chat sheet can stack above it
+  useEffect(() => {
+    const root = document.documentElement
+    const el = cardRef.current
+    if (!isMobile || !el) {
+      root.style.setProperty('--af-detail-h', '0px')
+      return
+    }
+    const publish = () => root.style.setProperty('--af-detail-h', `${Math.round(el.getBoundingClientRect().height)}px`)
+    publish()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(publish) : null
+    ro?.observe(el)
+    return () => {
+      ro?.disconnect()
+      root.style.setProperty('--af-detail-h', '0px')
+    }
+  }, [isMobile, agent.currentTool])
+
+  // Desktop: fixed position, middle-left of the screen (below message feed panel)
   const left = CARD.margin
-  const top = typeof window !== 'undefined' ? Math.max(100, (window.innerHeight - CARD.detail.height) / 2) : 300
+  const top = Math.max(100, (viewportH - CARD.detail.height) / 2)
+
+  const style: React.CSSProperties = isMobile
+    ? {
+        // Mobile: bottom sheet that scrolls when the viewport is short (landscape)
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: Z.sheet,
+        maxHeight: 'min(45dvh, calc(100dvh - var(--af-sheet-top) - 80px))',
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+        borderRadius: '12px 12px 0 0',
+      }
+    : { position: 'absolute', left, top, width: CARD.detail.width, zIndex: Z.detailCard }
 
   return (
     <GlassCard
       visible={true}
-      className="agent-detail-card"
-      style={{
-        position: 'absolute',
-        left,
-        top,
-        width: CARD.detail.width,
-        zIndex: Z.detailCard,
-      }}
+      innerRef={cardRef}
+      role="dialog"
+      aria-label={`${agent.name} details`}
+      className={`agent-detail-card${isMobile ? ' af-sheet' : ''}`}
+      style={style}
     >
       <PanelHeader onClose={onClose} className="mb-3">
         <div

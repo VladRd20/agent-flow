@@ -25,14 +25,17 @@ export function FileAttentionPanel({ visible, fileAttention, onClose, onOpenFile
   return (
     <SlidingPanel
       visible={visible}
-      position={{ top: 48, right: 12 }}
+      position={{ top: 'var(--af-feed-top)', right: 'var(--af-right)' }}
       zIndex={Z.sidePanel}
+      mobileZIndex={Z.sheet}
       width={260}
-      // Mobile: full-screen sheet instead of a small floating card
-      mobilePosition={{ top: 0, left: 0, right: 0, bottom: 0 }}
+      label="File attention"
+      onDismiss={onClose}
+      // Mobile: sheet below the top bar (hamburger stays reachable), backdrop taps close it
+      mobilePosition={{ top: 'var(--af-sheet-top)', left: 0, right: 0, bottom: 0 }}
       mobileWidth="100%"
     >
-      <div className="glass-card relative" style={isMobile ? { height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 0 } : undefined}>
+      <div className={`glass-card relative ${isMobile ? 'af-sheet' : ''}`} style={isMobile ? { height: '100%', display: 'flex', flexDirection: 'column', borderRadius: '12px 12px 0 0' } : undefined}>
         <PanelHeader onClose={onClose}>
           <span className="text-[10px] font-mono tracking-wider" style={{ color: COLORS.textPrimary }}>
             FILE ATTENTION
@@ -40,7 +43,7 @@ export function FileAttentionPanel({ visible, fileAttention, onClose, onOpenFile
         </PanelHeader>
 
         {/* File list */}
-        <div className="space-y-1 overflow-y-auto" style={{ maxHeight: isMobile ? undefined : 300, flex: isMobile ? 1 : undefined }}>
+        <div className="space-y-1 overflow-y-auto overscroll-contain min-h-0" style={{ maxHeight: isMobile ? undefined : 300, flex: isMobile ? 1 : undefined }}>
           {files.length === 0 && (
             <div className="text-[9px] font-mono py-2 text-center" style={{ color: COLORS.textMuted }}>
               No files accessed yet

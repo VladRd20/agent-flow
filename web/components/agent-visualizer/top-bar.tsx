@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useRef, useState } from "react"
+import { memo, useCallback, useRef, useState } from "react"
 import { Z } from "@/lib/agent-types"
 import { COLORS } from "@/lib/colors"
 import { formatTokens } from "@/lib/utils"
@@ -9,6 +9,7 @@ import { SessionTabs } from "./session-tabs"
 import type { SessionInfo, ConnectionStatus } from "@/lib/bridge-types"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { useClickOutside } from "@/hooks/use-click-outside"
+import { useEscapeKey } from "@/hooks/use-escape-key"
 
 // ─── Mute/Unmute SVG Icons ───────────────────────────────────────────────────
 
@@ -34,8 +35,9 @@ function UnmutedIcon() {
 
 // ─── Toggle Button ──────────────────────────────────────────────────────────
 
-function ToggleButton({ active, onClick, children, style, activeColor }: {
+function ToggleButton({ active, onClick, children, style, activeColor, label }: {
   active: boolean
+  label?: string
   onClick: () => void
   children: React.ReactNode
   style?: React.CSSProperties
@@ -43,8 +45,11 @@ function ToggleButton({ active, onClick, children, style, activeColor }: {
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="px-1.5 py-0.5 rounded transition-all"
+      aria-pressed={active}
+      aria-label={label}
+      className="af-hit px-1.5 py-0.5 rounded transition-all"
       style={{
         background: active ? (activeColor?.bg ?? COLORS.toggleActive) : COLORS.toggleInactive,
         border: `1px solid ${COLORS.toggleBorder}`,
@@ -59,20 +64,39 @@ function ToggleButton({ active, onClick, children, style, activeColor }: {
 
 // ─── Connection Status Indicator ────────────────────────────────────────────
 
-function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
+function connectionMeta(status: ConnectionStatus) {
   const color = status === 'watching' ? COLORS.complete
     : status === 'connected' ? COLORS.idle : COLORS.error
   const label = status === 'watching' ? 'LIVE'
     : status === 'connected' ? 'CONNECTED' : 'OFFLINE'
+  return { color, label }
+}
+
+function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
+  const { color, label } = connectionMeta(status)
 
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex items-center gap-1.5" role="status">
       <span
         className="w-1.5 h-1.5 rounded-full"
         style={{ background: color, boxShadow: `0 0 4px ${color}` }}
       />
       {label}
     </span>
+  )
+}
+
+/** Tiny dot-only variant for the cramped mobile bar. */
+function ConnectionDot({ status }: { status: ConnectionStatus }) {
+  const { color, label } = connectionMeta(status)
+  return (
+    <span
+      role="status"
+      aria-label={`Connection: ${label}`}
+      title={label}
+      className="flex-shrink-0 w-2 h-2 rounded-full"
+      style={{ background: color, boxShadow: `0 0 4px ${color}` }}
+    />
   )
 }
 
@@ -113,16 +137,19 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 function DesktopTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
-  isVSCode, connectionStatus,
+  connectionStatus,
   agentCount, totalTokens,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
   return (
-    <div className="absolute top-3 left-3 right-3 flex items-center gap-4 font-mono text-[10px]" style={{ zIndex: Z.info }}>
+    <div
+      className="absolute flex items-center gap-4 font-mono text-[10px] pointer-events-none"
+      style={{ top: 'var(--af-top)', left: 'var(--af-left)', right: 'var(--af-right)', zIndex: Z.topBar }}
+    >
       {/* Session tabs — scrollable, takes available space */}
       {sessions.length > 1 && (
-        <div className="min-w-0 flex-shrink overflow-x-auto scrollbar-hide">
+        <div className="min-w-0 flex-shrink pointer-events-auto">
           <SessionTabs
             sessions={sessions}
             selectedSessionId={selectedSessionId}
@@ -137,8 +164,8 @@ function DesktopTopBar({
       <div className="flex-1" />
 
       {/* Right-side info/controls */}
-      <div className="flex items-center gap-4 flex-shrink-0" style={{ color: COLORS.textMuted }}>
-        {isVSCode && <ConnectionIndicator status={connectionStatus} />}
+      <div className="flex items-center gap-4 flex-shrink-0 pointer-events-auto" style={{ color: COLORS.textMuted }}>
+        <ConnectionIndicator status={connectionStatus} />
         <span>{agentCount} agents</span>
         <span>
           {formatTokens(totalTokens)} tokens
@@ -148,7 +175,7 @@ function DesktopTopBar({
         </span>
 
         {/* Mutually exclusive panel group */}
-        <div className="flex items-center gap-1 px-1 py-0.5 rounded" style={{
+        <div role="group" aria-label="Panels" className="flex items-center gap-1 px-1 py-0.5 rounded" style={{
           background: COLORS.holoBg03,
           border: `1px solid ${COLORS.holoBorder06}`,
         }}>
@@ -166,7 +193,7 @@ function DesktopTopBar({
 
         {/* Independent toggles */}
         <ToggleButton active={showTimeline} onClick={onToggleTimeline}>Timeline</ToggleButton>
-        <ToggleButton active={!isMuted} onClick={onToggleMute} style={{ border: `1px solid ${COLORS.toggleBorder}` }}>
+        <ToggleButton active={!isMuted} onClick={onToggleMute} label={isMuted ? 'Unmute' : 'Mute'} style={{ border: `1px solid ${COLORS.toggleBorder}` }}>
           {isMuted ? <MutedIcon /> : <UnmutedIcon />}
         </ToggleButton>
       </div>
@@ -181,19 +208,30 @@ function DesktopTopBar({
 function MobileTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
-  isVSCode, connectionStatus,
+  connectionStatus,
   agentCount, totalTokens,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  useClickOutside(menuRef, () => setMenuOpen(false))
+  const closeMenu = useCallback(() => setMenuOpen(false), [])
+  useClickOutside(menuRef, closeMenu)
+  useEscapeKey(closeMenu, menuOpen)
 
   return (
-    <div className="absolute top-2 left-2 right-2 flex items-center gap-2 font-mono text-[10px]" style={{ zIndex: Z.info }}>
+    <div
+      className="absolute flex items-center gap-2 font-mono text-[10px] pointer-events-none"
+      style={{
+        top: 'var(--af-top)',
+        left: 'var(--af-left)',
+        right: 'var(--af-right)',
+        height: 'var(--af-top-bar-h)',
+        zIndex: Z.topBar,
+      }}
+    >
       {sessions.length > 1 && (
-        <div className="min-w-0 flex-1 overflow-x-auto scrollbar-hide">
+        <div className="min-w-0 flex-1 pointer-events-auto">
           <SessionTabs
             sessions={sessions}
             selectedSessionId={selectedSessionId}
@@ -203,20 +241,23 @@ function MobileTopBar({
           />
         </div>
       )}
-      <div className="flex-1" />
 
-      <div ref={menuRef} className="relative flex-shrink-0" style={{ pointerEvents: 'auto' }}>
+      <div ref={menuRef} className="relative flex-shrink-0 flex items-center gap-2 ml-auto pointer-events-auto">
+        <ConnectionDot status={connectionStatus} />
         <button
+          type="button"
           onClick={() => setMenuOpen(o => !o)}
           className="flex items-center justify-center rounded"
           aria-label="Menu"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
           style={{
-            width: 32,
-            height: 32,
+            width: 44,
+            height: 44,
             background: menuOpen ? COLORS.toggleActive : COLORS.toggleInactive,
             border: `1px solid ${COLORS.toggleBorder}`,
             color: menuOpen ? COLORS.holoBright : COLORS.textMuted,
-            fontSize: 16,
+            fontSize: 18,
           }}
         >
           ☰
@@ -224,17 +265,23 @@ function MobileTopBar({
 
         {menuOpen && (
           <div
-            className="absolute right-0 mt-1 rounded flex flex-col gap-1 p-2"
+            role="menu"
+            aria-label="Panels"
+            className="absolute right-0 rounded flex flex-col gap-1 p-2"
             style={{
+              top: '100%',
+              marginTop: 4,
               minWidth: 200,
+              maxWidth: 'calc(100vw - 16px)',
               background: 'rgba(10, 15, 30, 0.92)',
-              backdropFilter: 'blur(20px)',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
               border: `1px solid ${COLORS.holoBorder06}`,
               boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
             }}
           >
             <div className="flex items-center justify-between px-1 py-1" style={{ color: COLORS.textMuted }}>
-              {isVSCode && <ConnectionIndicator status={connectionStatus} />}
+              <ConnectionIndicator status={connectionStatus} />
               <span>{agentCount} agents</span>
             </div>
             <div className="px-1 pb-1" style={{ color: COLORS.textMuted }}>
@@ -244,16 +291,16 @@ function MobileTopBar({
               </span>
             </div>
 
-            <MobileMenuToggle label="Files" active={showFileAttention} onClick={() => { onTogglePanel('files'); setMenuOpen(false) }} />
-            <MobileMenuToggle label="Chat" active={showTranscript} onClick={() => { onTogglePanel('transcript'); setMenuOpen(false) }} />
+            <MobileMenuToggle label="Files" active={showFileAttention} onClick={() => { onTogglePanel('files'); closeMenu() }} />
+            <MobileMenuToggle label="Chat" active={showTranscript} onClick={() => { onTogglePanel('transcript'); closeMenu() }} />
             <MobileMenuToggle
               label="$Cost"
               active={showCostOverlay}
-              onClick={() => { onTogglePanel('cost'); setMenuOpen(false) }}
+              onClick={() => { onTogglePanel('cost'); closeMenu() }}
               activeColor={{ bg: COLORS.costActiveBg, text: COLORS.complete }}
             />
-            <MobileMenuToggle label="Timeline" active={showTimeline} onClick={() => { onToggleTimeline(); setMenuOpen(false) }} />
-            <MobileMenuToggle label={isMuted ? 'Unmute' : 'Mute'} active={!isMuted} onClick={onToggleMute} />
+            <MobileMenuToggle label="Timeline" active={showTimeline} onClick={() => { onToggleTimeline(); closeMenu() }} />
+            <MobileMenuToggle label={isMuted ? 'Unmute' : 'Mute'} active={!isMuted} onClick={() => { onToggleMute(); closeMenu() }} />
           </div>
         )}
       </div>
@@ -269,8 +316,11 @@ function MobileMenuToggle({ label, active, onClick, activeColor }: {
 }) {
   return (
     <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={active}
       onClick={onClick}
-      className="text-left px-2 py-1.5 rounded transition-all"
+      className="text-left px-3 min-h-11 flex items-center rounded transition-all"
       style={{
         background: active ? (activeColor?.bg ?? COLORS.toggleActive) : 'transparent',
         color: active ? (activeColor?.text ?? COLORS.holoBright) : COLORS.textMuted,
