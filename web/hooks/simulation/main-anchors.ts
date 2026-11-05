@@ -5,7 +5,7 @@ export type AnchorAgent = Pick<Agent, 'id' | 'isMain' | 'parentId' | 'spawnTime'
 export interface Point { x: number; y: number }
 
 /** Smallest centre-to-centre distance between neighbouring session clusters (world px). */
-const MIN_CELL = 900
+const MIN_CELL = 1300
 
 /** Root (main) id of every agent, following parentId links. */
 export function rootOf(agents: Iterable<AnchorAgent>): Map<string, string> {
@@ -37,7 +37,7 @@ export function computeMainAnchors(agents: Iterable<AnchorAgent>): Map<string, P
   for (const r of roots.values()) sizes.set(r, (sizes.get(r) ?? 0) + 1)
   let biggest = 1
   for (const m of mains) biggest = Math.max(biggest, sizes.get(m.id) ?? 1)
-  const cell = MIN_CELL + 140 * Math.sqrt(biggest)
+  const cell = MIN_CELL + 220 * Math.sqrt(biggest)
 
   const n = mains.length
   const cols = Math.ceil(Math.sqrt(n * 1.6))
@@ -61,7 +61,7 @@ export function computeForceTargets(agents: Iterable<AnchorAgent>): Map<string, 
   const roots = rootOf(list)
   for (const a of list) {
     const anchor = anchors.get(roots.get(a.id) ?? a.id)
-    if (anchor) targets.set(a.id, { ...anchor, strength: a.isMain ? 0.3 : 0.02 })
+    if (anchor) targets.set(a.id, { ...anchor, strength: a.isMain ? 0.3 : 0.06 })
   }
   return targets
 }
