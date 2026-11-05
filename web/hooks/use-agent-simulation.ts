@@ -10,7 +10,7 @@ import {
 } from '@/lib/agent-types'
 import { MOCK_SCENARIO } from '@/lib/mock-scenario'
 import { TOOL_CARD_W, TOOL_CARD_H, FORCE, TOOL_SLOT, BUBBLE_VISIBLE_S, MODEL_FAMILY_CONTEXT, DEFAULT_CONTEXT_SIZE, FALLBACK_CONTEXT_SIZE, ANIM_SPEED } from '@/lib/canvas-constants'
-import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, type Simulation } from 'd3-force'
+import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
 
 import type { SimulationState, ForceNode, ForceLink, UseAgentSimulationOptions } from './simulation/types'
 import { createEmptyState, MAX_EVENT_LOG } from './simulation/types'
@@ -18,7 +18,8 @@ import { processEvent, foldEvents, VISUAL_LIFETIME_S, HISTORICAL_BATCH_MIN, type
 import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
 import { shouldCommitFrame } from './simulation/ui-throttle'
-import { buildForceConfig } from './simulation/force-config'
+import { buildForceConfig, type ForceConfig } from './simulation/force-config'
+import { ALL_SESSIONS_ID } from '@/lib/all-sessions'
 import { frameDriver, wakeFrames, PERF_STATS_ENABLED, type FrameMode } from '@/lib/frame-driver'
 
 /** Per-frame time budget for folding a replay backlog, and fold slice size. */
@@ -56,6 +57,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const skippedToolsRef = useRef(new Map<string, { args: string; inputData?: Record<string, unknown> }>())
   /** Per-node collide radii (world px) from buildForceConfig, read by forceCollide */
   const radiiRef = useRef<{ radii: Map<string, number>; fallback: number }>({ radii: new Map(), fallback: FORCE.collideRadius })
+  /** Per-node anchor pull (All view: keeps each session's cluster in its own cell) */
+  const targetsRef = useRef<ForceConfig['targets']>(new Map())
   /** Throttle React UI updates to ~4/sec — canvas stays smooth via frameRef */
   const lastUIUpdateRef = useRef(0)
   const lastUITimeRef = useRef(0)
@@ -66,6 +69,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       .force('charge', forceManyBody().strength(FORCE.chargeStrength))
       .force('center', forceCenter(0, 0).strength(FORCE.centerStrength))
       .force('collide', forceCollide<ForceNode>(n => radiiRef.current.radii.get(n.id) ?? radiiRef.current.fallback))
+      .force('anchorX', forceX<ForceNode>(n => targetsRef.current.get(n.id)?.x ?? 0).strength(n => targetsRef.current.get(n.id)?.strength ?? 0))
+      .force('anchorY', forceY<ForceNode>(n => targetsRef.current.get(n.id)?.y ?? 0).strength(n => targetsRef.current.get(n.id)?.strength ?? 0))
       .force('link', forceLink<ForceNode, ForceLink>([]).id(d => d.id).distance(FORCE.linkDistance).strength(FORCE.linkStrength))
       .alphaDecay(FORCE.alphaDecay)
       .velocityDecay(FORCE.velocityDecay)
@@ -109,6 +114,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
 
     const cfg = buildForceConfig(agents, edges)
     radiiRef.current = { radii: cfg.radii, fallback: cfg.fallbackRadius }
+    targetsRef.current = cfg.targets
     const charge = sim.force('charge') as ReturnType<typeof forceManyBody> | undefined
     if (charge) charge.strength(cfg.chargeStrength)
 
@@ -245,7 +251,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       }
       const activeFilter = sessionFilterRef.current
       for (const event of capturedEvents) {
-        if (activeFilter && event.sessionId && event.sessionId !== activeFilter) continue
+        if (activeFilter && activeFilter !== ALL_SESSIONS_ID && event.sessionId && event.sessionId !== activeFilter) continue
         backlogRef.current.push(event)
       }
     }
@@ -508,6 +514,29 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     setTimeout(() => syncForceSimulation(replayState.agents, replayState.edges), 0)
   }, [processEventWithContext, useMockData, syncForceSimulation, commitState])
 
+  /** All view: make each session's main node (and timeline row) show its current tab label. */
+  const relabelMains = useCallback((labels: ReadonlyMap<string, string>) => {
+    const prev = frameRef.current
+    let agents: Map<string, Agent> | null = null
+    let entries: SimulationState['timelineEntries'] | null = null
+    const relabel = (map: Map<string, Agent>, hidden = false) => {
+      for (const [id, a] of map) {
+        const label = a.isMain && a.sessionId ? labels.get(a.sessionId) : undefined
+        if (!label || a.name === label || hidden) continue
+        if (!agents) agents = new Map(prev.agents)
+        agents.set(id, { ...a, name: label })
+        const entry = prev.timelineEntries.get(id)
+        if (entry && entry.agentName !== label) {
+          if (!entries) entries = new Map(prev.timelineEntries)
+          entries.set(id, { ...entry, agentName: label })
+        }
+      }
+    }
+    relabel(prev.agents)
+    if (!agents) return
+    commitState({ ...prev, agents, ...(entries ? { timelineEntries: entries } : {}) })
+  }, [commitState])
+
   // ─── Session state save/restore ──────────────────────────────────────────
   /** `pending` = events received but not yet folded into simState (must be re-delivered on restore). */
   const saveSnapshot = useCallback((): { simState: SimulationState; blockId: number; pending: number } => ({
@@ -551,6 +580,6 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     conversations: state.conversations,
     play, pause, restart, setSpeed, seekToTime,
     updateAgentPosition,
-    saveSnapshot, restoreSnapshot,
+    saveSnapshot, restoreSnapshot, relabelMains,
   }
 }

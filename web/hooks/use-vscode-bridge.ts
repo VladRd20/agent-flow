@@ -6,6 +6,9 @@ import { SimulationEvent } from '@/lib/agent-types'
 import { SeqTracker } from '@/lib/seq-tracker'
 import { SessionEventBuffer } from '@/lib/session-event-buffer'
 import { wakeFrames } from '@/lib/frame-driver'
+import {
+  ALL_SESSIONS_ID, computeAllBase, mergeEventsByTime, readAllViewPreference, transformEventForAll, writeAllViewPreference,
+} from '@/lib/all-sessions'
 
 /** Max events kept in the per-session replay buffer (oldest are dropped).
  *  Without a cap a long-running/high-volume session grows this for the life of
@@ -46,6 +49,10 @@ interface BridgeHookResult {
   sessionsWithActivity: Set<string>
   /** Remove a session from the list */
   removeSession: (sessionId: string) => void
+  /** Bumped when the All view must be rebuilt from the buffers (e.g. a tab was closed while in All) */
+  allRebuildToken: number
+  /** Re-run the All view from scratch: clears pending and blocks delivery until flushSessionEvents(ALL). */
+  rebuildAll: () => void
 }
 
 /**
@@ -67,7 +74,12 @@ export function useVSCodeBridge(): BridgeHookResult {
 
   // Session state
   const [sessions, setSessions] = useState<SessionInfo[]>([])
+  /** Synchronous mirror of `sessions` so the event handler sees labels/start times of just-announced sessions. */
+  const sessionsRef = useRef<SessionInfo[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  /** Common clock origin of the All view (epoch ms), fixed when All is entered. */
+  const allBaseRef = useRef<number>(Date.now())
+  const [allRebuildToken, setAllRebuildToken] = useState(0)
   const selectedSessionIdRef = useRef<string | null>(null)
   const sessionEventsRef = useRef<Map<string, SessionEventBuffer<SimulationEvent>>>(new Map())
   /** Last relay seq seen per session + relay epoch, for dedupe and resume-on-reconnect. */
@@ -83,13 +95,29 @@ export function useVSCodeBridge(): BridgeHookResult {
   /** Every session id this client has been told about (list or started). */
   const knownSessionIdsRef = useRef<Set<string>>(new Set())
 
+  /** setSessions that also updates sessionsRef synchronously. */
+  const applySessions = (updater: (prev: SessionInfo[]) => SessionInfo[]) => {
+    const next = updater(sessionsRef.current)
+    sessionsRef.current = next
+    setSessions(next)
+  }
+
+  /** Transform one session's raw event for the All view using current session metadata. */
+  const toAllEvent = (e: SimulationEvent): SimulationEvent => {
+    const meta = sessionsRef.current.find(s => s.id === e.sessionId)
+    return transformEventForAll(e, meta, allBaseRef.current)
+  }
+
   /** Start switching the selection. Records the outgoing session's delivered
    *  cursor BEFORE pending is cleared: events still pending, or arriving before
    *  the layout effect swaps state, were never folded and must be replayed when
    *  the user comes back. Only refs are touched, so this is safe from any closure. */
   const beginSwitch = (nextId: string | null) => {
     const prev = selectedSessionIdRef.current
-    if (!sessionSwitchPendingRef.current && prev && prev !== nextId) {
+    if (nextId === ALL_SESSIONS_ID && prev !== ALL_SESSIONS_ID) allBaseRef.current = computeAllBase(sessionsRef.current)
+    // Leaving All records no cursor: All keeps no per-session snapshot, and a
+    // cursor for the '__all__' pseudo-session (or any real one) would be bogus.
+    if (!sessionSwitchPendingRef.current && prev && prev !== ALL_SESSIONS_ID && prev !== nextId) {
       const end = sessionEventsRef.current.get(prev)?.end ?? 0
       switchCursorRef.current = { sessionId: prev, end: Math.max(0, end - pendingEventsRef.current.length) }
     }
@@ -209,7 +237,7 @@ export function useVSCodeBridge(): BridgeHookResult {
         const lastTouched = lastActivityTouchRef.current.get(event.sessionId) ?? 0
         if (now - lastTouched >= 5000) {
           lastActivityTouchRef.current.set(event.sessionId, now)
-          setSessions(prev => {
+          applySessions(prev => {
             const s = prev.find(x => x.id === event.sessionId)
             if (!s) {
               // Session not listed yet: don't suppress the next update
@@ -232,7 +260,14 @@ export function useVSCodeBridge(): BridgeHookResult {
       // render on every single event here would re-render the whole tree at
       // event-arrival rate instead, defeating that throttle.
       const selected = selectedSessionIdRef.current
-      if (selected && event.sessionId === selected && !sessionSwitchPendingRef.current) {
+      if (selected === ALL_SESSIONS_ID) {
+        // All view: every session's events feed the one simulation (namespaced, common clock).
+        // No "background activity" marks: nothing is in the background.
+        if (!sessionSwitchPendingRef.current && event.sessionId) {
+          pendingEventsRef.current.push(toAllEvent(simEvent))
+          wakeFrames()
+        }
+      } else if (selected && event.sessionId === selected && !sessionSwitchPendingRef.current) {
         pendingEventsRef.current.push(simEvent)
         // The simulation drains pending from the shared frame loop, which stops
         // when everything is idle: new data must restart it.
@@ -252,7 +287,7 @@ export function useVSCodeBridge(): BridgeHookResult {
         const saved = dismissedSessionsRef.current.get(event.sessionId)
         dismissedSessionsRef.current.delete(event.sessionId)
         if (saved) {
-          setSessions(prev => {
+          applySessions(prev => {
             if (prev.find(s => s.id === saved.id)) return prev
             return [...prev, { ...saved, status: 'active' as const, lastActivityTime: Date.now() }]
           })
@@ -276,7 +311,7 @@ export function useVSCodeBridge(): BridgeHookResult {
     const unsubSession = bridge.onSession((type, data) => {
       if (type === 'reset') {
         // Panel was reopened — clear all stale state
-        setSessions([])
+        applySessions(() => [])
         setSelectedSessionId(null)
         selectedSessionIdRef.current = null
         pendingEventsRef.current.length = 0
@@ -291,7 +326,7 @@ export function useVSCodeBridge(): BridgeHookResult {
       if (type === 'list') {
         const sessionList = data as SessionInfo[]
         for (const s of sessionList) knownSessionIdsRef.current.add(s.id)
-        setSessions(sessionList)
+        applySessions(() => sessionList)
         // Evict replay buffers (and cursors) of sessions the relay no longer lists
         const listed = new Set(sessionList.map(s => s.id))
         for (const id of [...sessionEventsRef.current.keys()]) {
@@ -302,7 +337,11 @@ export function useVSCodeBridge(): BridgeHookResult {
         }
         // Auto-select: prefer active sessions, then most recently active.
         // Only set selection — useLayoutEffect handles flushing events.
-        if (!selectedSessionIdRef.current && sessionList.length > 0) {
+        if (!selectedSessionIdRef.current && sessionList.length > 0 && readAllViewPreference()) {
+          // All is the default view (a missing preference means All)
+          beginSwitch(ALL_SESSIONS_ID)
+          setSelectedSessionId(ALL_SESSIONS_ID)
+        } else if (!selectedSessionIdRef.current && sessionList.length > 0) {
           const sorted = [...sessionList].sort((a, b) => {
             const aActive = a.status === 'active' ? 1 : 0
             const bActive = b.status === 'active' ? 1 : 0
@@ -325,7 +364,7 @@ export function useVSCodeBridge(): BridgeHookResult {
         // session waking up would yank the user away from the one they watch.
         const isNewSession = !knownSessionIdsRef.current.has(session.id)
         knownSessionIdsRef.current.add(session.id)
-        setSessions(prev => {
+        applySessions(prev => {
           const existing = prev.find(s => s.id === session.id)
           if (existing) {
             // Session resumed after inactivity — mark active again
@@ -335,6 +374,8 @@ export function useVSCodeBridge(): BridgeHookResult {
           }
           return [...prev, session]
         })
+        // While All is selected a new session just appears as another cluster
+        if (selectedSessionIdRef.current === ALL_SESSIONS_ID) return
         if (alreadySelected || (!isNewSession && selectedSessionIdRef.current)) return
         // Auto-select newly started session.
         // Set switch-pending flag to prevent the animation frame from processing
@@ -343,12 +384,12 @@ export function useVSCodeBridge(): BridgeHookResult {
         setSelectedSessionId(session.id)
       } else if (type === 'updated') {
         const { sessionId, label } = data as { sessionId: string; label: string }
-        setSessions(prev => prev.map(s =>
+        applySessions(prev => prev.map(s =>
           s.id === sessionId ? { ...s, label } : s
         ))
       } else if (type === 'ended') {
         const sessionId = data as string
-        setSessions(prev => prev.map(s =>
+        applySessions(prev => prev.map(s =>
           s.id === sessionId ? { ...s, status: 'completed' as const } : s
         ))
       }
@@ -375,7 +416,11 @@ export function useVSCodeBridge(): BridgeHookResult {
     // Block event delivery to pending until the simulation state is swapped
     beginSwitch(sessionId)
     setSelectedSessionId(sessionId)
-    if (sessionId) {
+    // Explicit user choice: remember All vs a single session across reloads
+    if (sessionId) writeAllViewPreference(sessionId === ALL_SESSIONS_ID)
+    if (sessionId === ALL_SESSIONS_ID) {
+      setSessionsWithActivity(prev => prev.size === 0 ? prev : new Set())
+    } else if (sessionId) {
       setSessionsWithActivity(prev => {
         if (!prev.has(sessionId)) return prev
         const next = new Set(prev)
@@ -389,7 +434,15 @@ export function useVSCodeBridge(): BridgeHookResult {
    *  Must be called from useLayoutEffect AFTER simulation state is saved/swapped. */
   const flushSessionEvents = useCallback((sessionId: string, fromIndex = 0) => {
     sessionSwitchPendingRef.current = false
-    const buffered = sessionEventsRef.current.get(sessionId)?.sliceFrom(fromIndex) ?? []
+    let buffered: SimulationEvent[]
+    if (sessionId === ALL_SESSIONS_ID) {
+      // Every session's buffer, transformed and merged by shifted time
+      buffered = mergeEventsByTime(
+        [...sessionEventsRef.current.values()].map(buf => buf.sliceFrom(0).map(toAllEvent)),
+      )
+    } else {
+      buffered = sessionEventsRef.current.get(sessionId)?.sliceFrom(fromIndex) ?? []
+    }
     pendingEventsRef.current.length = 0
     // push in slices: spreading a huge array can exceed the argument limit
     for (let i = 0; i < buffered.length; i += 5000) pendingEventsRef.current.push(...buffered.slice(i, i + 5000))
@@ -407,14 +460,21 @@ export function useVSCodeBridge(): BridgeHookResult {
     return c.end
   }, [])
 
+  const rebuildAll = useCallback(() => {
+    if (selectedSessionIdRef.current !== ALL_SESSIONS_ID) return
+    sessionSwitchPendingRef.current = true
+    pendingEventsRef.current.length = 0
+    setAllRebuildToken(n => n + 1)
+  }, [])
+
   const dismissedSessionsRef = useRef<Map<string, SessionInfo>>(new Map())
 
   const removeSession = useCallback((sessionId: string) => {
-    setSessions(prev => {
-      const session = prev.find(s => s.id === sessionId)
-      if (session) { dismissedSessionsRef.current.set(sessionId, session) }
-      return prev.filter(s => s.id !== sessionId)
-    })
+    const prevSessions = sessionsRef.current
+    const session = prevSessions.find(s => s.id === sessionId)
+    if (session) { dismissedSessionsRef.current.set(sessionId, session) }
+    sessionsRef.current = prevSessions.filter(s => s.id !== sessionId)
+    setSessions(sessionsRef.current)
     setSessionsWithActivity(prev => {
       if (!prev.has(sessionId)) return prev
       const next = new Set(prev)
@@ -453,5 +513,7 @@ export function useVSCodeBridge(): BridgeHookResult {
     takeSwitchCursor,
     sessionsWithActivity,
     removeSession,
+    allRebuildToken,
+    rebuildAll,
   }
 }
