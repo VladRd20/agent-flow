@@ -1,25 +1,15 @@
 import { Agent, NODE, ANIM } from '@/lib/agent-types'
 import { COLORS, getStateColor, getAgentGroupColor, contextSegments } from '@/lib/colors'
 import {
-  AGENT_DRAW, CONTEXT_BAR, CONTEXT_RING, STATS_OVERLAY, FOCUS_DIM_ALPHA, LABEL_ZOOM_THRESHOLD, LABEL_ZOOM_BAND,
+  AGENT_DRAW, CONTEXT_RING, STATS_OVERLAY, FOCUS_DIM_ALPHA, LABEL_STACK, FONT,
 } from '@/lib/canvas-constants'
-import { alphaHex, formatTokens } from '@/lib/utils'
-import { truncateText, drawHexagon, CLAUDE_SPARK_D, OPENAI_LOGO_D, OPENAI_LOGO_VIEWBOX } from './draw-misc'
-import { getAgentGlowSprite } from './render-cache'
+import { alphaHex } from '@/lib/utils'
+import { drawHexagon, glowStroke, snapToDevice, CLAUDE_SPARK_D, OPENAI_LOGO_D, OPENAI_LOGO_VIEWBOX } from './draw-misc'
+import { getAgentGlowSprite, getGlowSprite } from './render-cache'
 import { getNodeSizeMultiplier } from './node-size'
+import { layoutContextRing } from './context-meter'
+import { getOverlayFrame, type LabelPlan, type OverlayFrame } from './overlay-layout'
 import type { EaseContext } from './eased-value-map'
-
-/** Smoothstep crossfade for the zoom-based label cutoff — continuous in
- *  zoomScale rather than a hard >= threshold cutoff, so labels fade in/out
- *  as the user zooms instead of popping. */
-function labelZoomAlpha(zoomScale: number): number {
-  const lo = LABEL_ZOOM_THRESHOLD - LABEL_ZOOM_BAND
-  const hi = LABEL_ZOOM_THRESHOLD + LABEL_ZOOM_BAND
-  if (zoomScale <= lo) return 0
-  if (zoomScale >= hi) return 1
-  const t = (zoomScale - lo) / (hi - lo)
-  return t * t * (3 - 2 * t)
-}
 
 let _claudeSparkPath: Path2D | null = null
 export function getClaudeSparkPath() {
@@ -40,8 +30,6 @@ export function drawClaudeSpark(ctx: CanvasRenderingContext2D, cx: number, cy: n
   ctx.scale(scale, scale)
   ctx.translate(-AGENT_DRAW.sparkViewBox, -AGENT_DRAW.sparkViewBox + 1)
   ctx.fillStyle = color
-  ctx.shadowColor = color
-  ctx.shadowBlur = 6 / scale
   ctx.fill(getClaudeSparkPath())
   ctx.restore()
 }
@@ -54,8 +42,6 @@ export function drawOpenAILogo(ctx: CanvasRenderingContext2D, cx: number, cy: nu
   ctx.scale(scale, scale)
   ctx.translate(-OPENAI_LOGO_VIEWBOX / 2, -OPENAI_LOGO_VIEWBOX / 2)
   ctx.fillStyle = color
-  ctx.shadowColor = color
-  ctx.shadowBlur = 6 / scale
   ctx.fill(getOpenAILogoPath())
   ctx.restore()
 }
@@ -66,59 +52,11 @@ export function drawAgentBrand(
   cx: number, cy: number, r: number, color: string,
   runtime: Agent['runtime'],
 ) {
+  // Soft halo behind the logo (pre-rendered sprite instead of per-frame shadowBlur)
+  const haloR = Math.max(4, Math.ceil(r * 0.5 / 2) * 2)
+  ctx.drawImage(getGlowSprite(color.slice(0, 7), haloR, '38', '00'), cx - haloR, cy - haloR)
   if (runtime === 'codex') drawOpenAILogo(ctx, cx, cy, r, color)
   else drawClaudeSpark(ctx, cx, cy, r, color)
-}
-
-export function drawContextComposition(
-  ctx: CanvasRenderingContext2D,
-  agent: Agent,
-  radius: number,
-) {
-  const bd = agent.contextBreakdown
-  const total = agent.tokensUsed
-  if (total <= 0) return
-
-  const barWidth = Math.max(CONTEXT_BAR.minWidth, radius * CONTEXT_BAR.widthMultiplier)
-  const barHeight = CONTEXT_BAR.barHeight
-  const barX = agent.x - barWidth / 2
-  const barY = agent.y + radius + CONTEXT_BAR.yOffset
-
-  // Background
-  ctx.fillStyle = COLORS.cardBgDark
-  ctx.beginPath()
-  ctx.roundRect(barX - 2, barY - 2, barWidth + 4, barHeight + 14, CONTEXT_BAR.borderRadius)
-  ctx.fill()
-
-  // Label
-  ctx.fillStyle = COLORS.textMuted
-  ctx.font = `${CONTEXT_BAR.fontSize}px monospace`
-  ctx.textAlign = 'center'
-  ctx.fillText(`${formatTokens(total)} / ${formatTokens(agent.tokensMax)} tokens`, agent.x, barY + barHeight + CONTEXT_BAR.labelPadding)
-
-  // Segments
-  const segments = contextSegments(bd)
-
-  let x = barX
-  const maxWidth = barWidth * (total / agent.tokensMax)
-
-  for (const seg of segments) {
-    if (seg.value <= 0) continue
-    const segWidth = (seg.value / total) * maxWidth
-    ctx.fillStyle = seg.color
-    ctx.fillRect(x, barY, segWidth, barHeight)
-    x += segWidth
-  }
-
-  // Remaining capacity
-  if (x < barX + barWidth) {
-    ctx.fillStyle = COLORS.holoBg05
-    ctx.fillRect(x, barY, barX + barWidth - x, barHeight)
-  }
-
-  ctx.strokeStyle = COLORS.glassBorder
-  ctx.lineWidth = 0.5
-  ctx.strokeRect(barX, barY, barWidth, barHeight)
 }
 
 export function drawContextRing(
@@ -127,35 +65,42 @@ export function drawContextRing(
   radius: number,
   time: number,
 ) {
-  const bd = agent.contextBreakdown
   const total = agent.tokensUsed
   if (total <= 0) return
 
-  const usage = total / agent.tokensMax
+  const usage = agent.tokensMax > 0 ? total / agent.tokensMax : 1
+  const over = usage > 1
   const ringR = radius + CONTEXT_RING.ringOffset
   const ringW = CONTEXT_RING.ringWidth
-  const startAngle = -Math.PI / 2
 
   // Background ring (empty capacity)
   ctx.beginPath()
   ctx.arc(agent.x, agent.y, ringR, 0, Math.PI * 2)
-  ctx.strokeStyle = COLORS.holoBorder06
+  ctx.strokeStyle = COLORS.holoBorder12
   ctx.lineWidth = ringW
   ctx.stroke()
 
-  // Filled segments
-  const segments = contextSegments(bd)
-
-  let currentAngle = startAngle
-  for (const seg of segments) {
-    if (seg.value <= 0) continue
-    const sweep = (seg.value / agent.tokensMax) * Math.PI * 2
+  // Filled segments: cumulative sweep is clamped to one full turn, so an
+  // over-capacity ring reads as a solid loop instead of wrapping over itself.
+  for (const arc of layoutContextRing(contextSegments(agent.contextBreakdown), total, agent.tokensMax)) {
     ctx.beginPath()
-    ctx.arc(agent.x, agent.y, ringR, currentAngle, currentAngle + sweep)
-    ctx.strokeStyle = seg.color
+    ctx.arc(agent.x, agent.y, ringR, arc.start, arc.end)
+    ctx.strokeStyle = arc.color
     ctx.lineWidth = ringW
     ctx.stroke()
-    currentAngle += sweep
+  }
+
+  // Over capacity: distinct dashed outer ring in the error color
+  if (over) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(agent.x, agent.y, ringR + ringW / 2 + 2.5, 0, Math.PI * 2)
+    ctx.setLineDash([5, 3])
+    ctx.lineDashOffset = -time * 8
+    ctx.strokeStyle = COLORS.error
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.restore()
   }
 
   // Warning glow at high usage
@@ -168,35 +113,18 @@ export function drawContextRing(
     ctx.save()
     ctx.beginPath()
     ctx.arc(agent.x, agent.y, ringR + CONTEXT_RING.glowPadding, 0, Math.PI * 2)
-    ctx.strokeStyle = warningColor
-    ctx.lineWidth = CONTEXT_RING.glowLineWidth
-    ctx.globalAlpha = intensity
-    ctx.shadowColor = warningColor
-    ctx.shadowBlur = CONTEXT_RING.glowBlur
-    ctx.stroke()
+    ctx.globalAlpha *= intensity
+    glowStroke(ctx, warningColor, CONTEXT_RING.glowLineWidth, 0.5)
     ctx.restore()
-  }
-
-  // Percentage label when usage is high
-  if (usage > CONTEXT_RING.percentLabelThreshold) {
-    ctx.font = `${CONTEXT_BAR.fontSize}px monospace`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'bottom'
-    ctx.fillStyle = usage > CONTEXT_RING.criticalThreshold ? COLORS.error : usage > CONTEXT_RING.warningThreshold ? COLORS.tool : COLORS.textDim
-    ctx.fillText(`${Math.floor(usage * 100)}%`, agent.x, agent.y - radius - CONTEXT_RING.percentYOffset)
   }
 }
 
 function drawDepthShadow(ctx: CanvasRenderingContext2D, agent: Agent, r: number) {
-  ctx.save()
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
-  ctx.shadowBlur = AGENT_DRAW.shadowBlur
-  ctx.shadowOffsetX = AGENT_DRAW.shadowOffsetX
-  ctx.shadowOffsetY = AGENT_DRAW.shadowOffsetY
-  drawHexagon(ctx, agent.x, agent.y, r * 0.9)
-  ctx.fillStyle = COLORS.cardBgFaintOverlay
-  ctx.fill()
-  ctx.restore()
+  // Soft drop shadow as a pre-rendered sprite (no per-frame shadowBlur)
+  const R = Math.max(8, Math.ceil(r * 1.35 / 2) * 2)
+  const sprite = getGlowSprite('#000000', R, '6e', '00')
+  const d = r * 1.35
+  ctx.drawImage(sprite, agent.x + AGENT_DRAW.shadowOffsetX - d, agent.y + AGENT_DRAW.shadowOffsetY - d, d * 2, d * 2)
 }
 
 function drawAgentGlow(ctx: CanvasRenderingContext2D, agent: Agent, r: number, color: string, isHovered: boolean, isSelected: boolean, isWaiting: boolean) {
@@ -208,7 +136,7 @@ function drawAgentGlow(ctx: CanvasRenderingContext2D, agent: Agent, r: number, c
 
   // Ambient outer hex ring
   drawHexagon(ctx, agent.x, agent.y, r + AGENT_DRAW.outerRingOffset)
-  ctx.strokeStyle = color + '25'
+  ctx.strokeStyle = color + '45'
   ctx.lineWidth = 1
   ctx.stroke()
 
@@ -256,7 +184,7 @@ function drawStateRing(ctx: CanvasRenderingContext2D, agent: Agent, r: number, g
   ctx.lineWidth = (isSelected || isHovered) ? 2.5 : 2
   if (agent.state === 'complete') {
     ctx.setLineDash([4, 4])
-    ctx.strokeStyle = ringColor + '60'
+    ctx.strokeStyle = ringColor + '99'
   } else if (isWaiting) {
     ctx.setLineDash([6, 4])
     ctx.lineDashOffset = -time * AGENT_DRAW.waitingDashSpeed
@@ -275,12 +203,8 @@ function drawErrorAlertRing(ctx: CanvasRenderingContext2D, agent: Agent, r: numb
   const pulse = 0.5 + Math.sin(time * 6) * 0.3
   ctx.save()
   drawHexagon(ctx, agent.x, agent.y, r + AGENT_DRAW.outerRingOffset + 2)
-  ctx.strokeStyle = COLORS.error
-  ctx.lineWidth = 2
   ctx.globalAlpha = pulse
-  ctx.shadowColor = COLORS.error
-  ctx.shadowBlur = 8
-  ctx.stroke()
+  glowStroke(ctx, COLORS.error, 2, 0.35)
   ctx.restore()
 }
 
@@ -293,9 +217,9 @@ function drawCenterIcon(
     // is a dedicated state signal, not the node's group/category identity.
     const s = r * 0.3
     ctx.save()
-    ctx.strokeStyle = stateColor + '90'
-    ctx.fillStyle = stateColor + '90'
-    ctx.lineWidth = 1.5
+    ctx.strokeStyle = stateColor + 'e6'
+    ctx.fillStyle = stateColor + 'e6'
+    ctx.lineWidth = 1.75
     // Lock body (rounded rect)
     ctx.beginPath()
     ctx.roundRect(agent.x - s * 0.6, agent.y - s * 0.1, s * 1.2, s * 1.0, 2)
@@ -306,12 +230,12 @@ function drawCenterIcon(
     ctx.stroke()
     ctx.restore()
   } else if (agent.isMain) {
-    drawAgentBrand(ctx, agent.x, agent.y, r, groupColor + '90', agent.runtime)
+    drawAgentBrand(ctx, agent.x, agent.y, r, groupColor + 'd0', agent.runtime)
   } else {
     // Icon shape (gear vs. diamond) already signals tool_calling vs. other
     // states, so the fill can safely be the node's group/category color.
-    ctx.fillStyle = groupColor + '90'
-    ctx.font = `${r * AGENT_DRAW.subIconScale}px monospace`
+    ctx.fillStyle = groupColor + 'd0'
+    ctx.font = FONT.mono(r * AGENT_DRAW.subIconScale)
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(agent.state === 'tool_calling' ? '\u2699' : '\u25C7', agent.x, agent.y)
@@ -336,7 +260,9 @@ function drawWaitingRipples(ctx: CanvasRenderingContext2D, agent: Agent, r: numb
   // Radar ripples — 2 concentric rings expanding outward, staggered
   for (let i = 0; i < 2; i++) {
     const ripplePhase = ((time * 0.65 + i * 0.5) % 1.0)
-    const rippleR = r + AGENT_DRAW.rippleInnerOffset + ripplePhase * AGENT_DRAW.rippleMaxExpand
+    // Expansion scales with the node so the ripples stay inside its own footprint
+    const expand = Math.min(AGENT_DRAW.rippleMaxExpand, r * 0.45)
+    const rippleR = r + AGENT_DRAW.rippleInnerOffset + ripplePhase * expand
     const rippleAlpha = (1 - ripplePhase) * AGENT_DRAW.rippleMaxAlpha
     ctx.beginPath()
     drawHexagon(ctx, agent.x, agent.y, rippleR)
@@ -359,16 +285,95 @@ function drawWaitingRipples(ctx: CanvasRenderingContext2D, agent: Agent, r: numb
   }
 }
 
-function drawAgentLabel(ctx: CanvasRenderingContext2D, agent: Agent, r: number, isHovered: boolean, alpha: number = 1) {
+/**
+ * Screen-space label stack (name + context bar + token text on one plate).
+ * Geometry comes from the declutter pass in overlay-layout.ts; everything is
+ * snapped to the device pixel grid and drawn at constant on-screen size.
+ */
+function drawLabelStack(
+  ctx: CanvasRenderingContext2D, plan: LabelPlan, frame: OverlayFrame, agent: Agent,
+  emphasized: boolean, alpha: number,
+) {
+  const { rect, columnW } = plan
+  const dpr = frame.dpr
+  const x = snapToDevice(rect.x, dpr)
+  const y = snapToDevice(rect.y, dpr)
+  const w = Math.round(rect.w)
+  const h = Math.round(rect.h)
+
   ctx.save()
-  ctx.globalAlpha *= alpha
-  ctx.fillStyle = isHovered ? COLORS.textPrimary : COLORS.textDim
-  ctx.font = '10px monospace'
+  ctx.globalAlpha = alpha * plan.alpha
+
+  // Plate
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, 6)
+  ctx.fillStyle = COLORS.labelPlate
+  ctx.fill()
+  ctx.strokeStyle = plan.over ? COLORS.error + '80' : COLORS.labelPlateBorder
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  // Name
+  const cx = snapToDevice(x + w / 2, dpr)
+  const nameTop = y + LABEL_STACK.padY
+  ctx.font = frame.labelFont
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
-  const maxLabelW = r * AGENT_DRAW.labelWidthMultiplier
-  const agentLabel = truncateText(ctx, agent.name, maxLabelW)
-  ctx.fillText(agentLabel, agent.x, agent.y + r + AGENT_DRAW.labelYOffset)
+  ctx.fillStyle = emphasized ? COLORS.textPrimary : COLORS.textDim
+  ctx.fillText(plan.name, cx, snapToDevice(nameTop, dpr))
+
+  if (plan.bar && plan.tokenText) {
+    const nameH = Math.ceil(frame.labelPx * 1.25)
+    const barX = snapToDevice(x + (w - columnW) / 2, dpr)
+    const barY = snapToDevice(nameTop + nameH + LABEL_STACK.innerGap, dpr)
+    const barH = LABEL_STACK.barHeight
+    const bar = plan.bar
+
+    // Track + segments, clipped to the rounded bar so nothing can overflow it
+    ctx.save()
+    ctx.beginPath()
+    ctx.roundRect(barX, barY, columnW, barH, barH / 2)
+    ctx.clip()
+    ctx.fillStyle = COLORS.holoBg10
+    ctx.fillRect(barX, barY, columnW, barH)
+    for (const seg of bar.segments) {
+      ctx.fillStyle = seg.color
+      ctx.fillRect(barX + seg.start * columnW, barY, Math.max(0, (seg.end - seg.start) * columnW), barH)
+    }
+    if (bar.over) {
+      // Over capacity: solid red end cap
+      ctx.fillStyle = COLORS.error
+      ctx.fillRect(barX + columnW - LABEL_STACK.overCapWidth, barY, LABEL_STACK.overCapWidth, barH)
+    }
+    ctx.restore()
+    ctx.beginPath()
+    ctx.roundRect(barX, barY, columnW, barH, barH / 2)
+    ctx.strokeStyle = bar.over ? COLORS.error : COLORS.glassBorder
+    ctx.lineWidth = 0.75
+    ctx.stroke()
+
+    // Token text
+    ctx.font = frame.captionFont
+    ctx.fillStyle = bar.over ? COLORS.error : COLORS.textMuted
+    ctx.fillText(bar.over ? plan.tokenText + ' !' : plan.tokenText, cx, snapToDevice(barY + barH + LABEL_STACK.innerGap, dpr))
+  }
+  ctx.restore()
+}
+
+/** Pass B: all label stacks, drawn in screen space after every node. */
+function drawLabelPass(
+  ctx: CanvasRenderingContext2D, agents: Map<string, Agent>, frame: OverlayFrame,
+  hoveredAgentId: string | null, selectedAgentId: string | null, alphaById: Map<string, number>,
+) {
+  ctx.save()
+  ctx.setTransform(frame.dpr, 0, 0, frame.dpr, 0, 0)
+  for (const [id, plan] of frame.labels) {
+    const agent = agents.get(id)
+    if (!agent) continue
+    const alpha = alphaById.get(id) ?? agent.opacity
+    if (alpha < 0.02) continue
+    drawLabelStack(ctx, plan, frame, agent, agent.isMain || id === hoveredAgentId || id === selectedAgentId, alpha)
+  }
   ctx.restore()
 }
 
@@ -382,7 +387,7 @@ function drawStatsOverlay(ctx: CanvasRenderingContext2D, agent: Agent, r: number
   ctx.lineWidth = 0.5
   ctx.stroke()
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = `${STATS_OVERLAY.fontSize}px monospace`
+  ctx.font = FONT.mono(STATS_OVERLAY.fontSize)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
   ctx.fillText(`${agent.toolCalls} tools \u00B7 ${agent.timeAlive.toFixed(1)}s`, agent.x, sy + STATS_OVERLAY.textPaddingY)
@@ -415,6 +420,10 @@ export function drawAgents(
    *  don't track per-frame state). */
   ease?: EaseContext,
 ) {
+  // Per-node alpha (fade-in/out x focus dim) reused by the label pass
+  const alphaById = new Map<string, number>()
+
+  // Pass A: glows, hexagons, rings, icons for every node
   for (const [id, agent] of agents) {
     const radius = agent.isMain ? NODE.radiusMain : NODE.radiusSub
     const stateColor = getStateColor(agent.state)
@@ -467,22 +476,12 @@ export function drawAgents(
       drawWaitingRipples(ctx, agent, r, stateColor, time)
     }
 
-    // Labels: always show for the orchestrator, a hovered/selected node, or
-    // anything in the active focus set; otherwise sub-agent labels crossfade
-    // out at low zoom (smoothstep band around LABEL_ZOOM_THRESHOLD) instead
-    // of popping at a hard cutoff, to keep dense graphs readable
-    // (Obsidian-style density).
-    const forcedLabel = agent.isMain || isHovered || isSelected || (focusSet ? isFocused : false)
-    const labelAlpha = forcedLabel ? 1 : labelZoomAlpha(zoomScale)
-    if (labelAlpha > 0.01) drawAgentLabel(ctx, agent, r, isHovered, labelAlpha)
-
-    // Context composition — ring for main agent, bar for sub-agents
-    if (agent.state !== 'complete' || agent.opacity > 0.5) {
-      if (agent.isMain) {
-        drawContextRing(ctx, agent, r, time)
-      }
-      drawContextComposition(ctx, agent, r)
+    // Context ring (main agent only). Name / bar / token text live in the
+    // label pass below so they can be decluttered across all nodes.
+    if (agent.isMain && (agent.state !== 'complete' || agent.opacity > 0.5)) {
+      drawContextRing(ctx, agent, r, time)
     }
+    alphaById.set(id, agent.opacity * dimMultiplier)
 
     if (showStats && agent.state !== 'complete') {
       drawStatsOverlay(ctx, agent, r)
@@ -490,4 +489,8 @@ export function drawAgents(
 
     ctx.restore()
   }
+
+  // Pass B: label stacks (priority declutter; see overlay-layout.ts)
+  const frame = getOverlayFrame()
+  if (frame) drawLabelPass(ctx, agents, frame, hoveredAgentId, selectedAgentId, alphaById)
 }

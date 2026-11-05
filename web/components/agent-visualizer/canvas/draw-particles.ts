@@ -1,6 +1,6 @@
 import { Agent, ToolCallNode, Particle, Edge, BEAM, FX } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
-import { PARTICLE_DRAW } from '@/lib/canvas-constants'
+import { PARTICLE_DRAW, FONT } from '@/lib/canvas-constants'
 import { alphaHex } from '@/lib/utils'
 import { bezierPoint, resolveEdgeTarget, computeControlPoints } from './draw-edges'
 import { getGlowSprite } from './render-cache'
@@ -89,7 +89,7 @@ export function drawParticles(
     // Label near particle
     if (particle.label && t > PARTICLE_DRAW.labelMinT && t < PARTICLE_DRAW.labelMaxT) {
       ctx.fillStyle = particle.color + 'aa'
-      ctx.font = `${PARTICLE_DRAW.labelFontSize}px monospace`
+      ctx.font = FONT.mono(PARTICLE_DRAW.labelFontSize)
       ctx.textAlign = 'center'
       ctx.fillText(particle.label, px, py + PARTICLE_DRAW.labelYOffset)
     }

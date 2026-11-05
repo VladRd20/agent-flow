@@ -11,7 +11,7 @@ import {
   type VisualEffect,
   drawTetherLine,
   drawEffects,
-  drawAgents,
+  drawAgents, beginOverlayFrame,
   drawMessageBubblesWorld,
   drawEdges, getActiveEdgeIds,
   drawParticles, buildEdgeMap,
@@ -364,6 +364,13 @@ export function AgentCanvas({
       const sizeEaseRate = NODE_SIZE_EASE_RATE * reducedMotionMult
       const dimEase = { dimMap: dimEaseMapRef.current, rate: dimEaseRate, deltaTime }
       const agentEase = { dimMap: dimEaseMapRef.current, sizeMap: sizeEaseMapRef.current, rate: dimEaseRate, sizeRate: sizeEaseRate, deltaTime }
+
+      // Screen-space label/bubble/tool-card layout (priority declutter) for this frame
+      beginOverlayFrame({
+        ctx, agents, toolCalls, transform, viewport: { width: w, height: h }, dpr, deltaTime,
+        simTime: simTimeRef.current, selectedAgentId, hoveredAgentId, selectedToolCallId,
+        focusSet, degreeMap, sizeMap: sizeEaseMapRef.current,
+      })
 
       drawDiscoveryConnections(ctx, discoveries, agents)
       drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current, focusSet, selectedAgentId ?? hoveredAgentId, dimAlpha, dimEase)

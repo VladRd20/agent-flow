@@ -1,11 +1,11 @@
 import type { Agent, ToolCallNode, Discovery } from '@/lib/agent-types'
 import { NODE } from '@/lib/agent-types'
 import {
-  BUBBLE_MAX_W, BUBBLE_GAP,
   TOOL_MAX_CARD_W, getDiscoveryCardDimensions,
-  AGENT_DRAW, HIT_DETECTION, BUBBLE_DRAW, TOOL_DRAW,
+  HIT_DETECTION, TOOL_DRAW,
 } from '@/lib/canvas-constants'
 import { bubbleAlpha } from './bubble-utils'
+import { getBubbleWorldRect, getToolWorldRect, getOverlayFrame } from './overlay-layout'
 
 /**
  * Find which agent (if any) is at the given canvas-space coordinates.
@@ -36,7 +36,14 @@ export function findToolCallAt(
 ): string | null {
   for (const [id, tool] of toolCalls) {
     if (tool.opacity < 0.1) continue
-    // Match the card dimensions from drawToolCalls
+    const placed = getToolWorldRect(tool)
+    if (placed) {
+      if (x >= placed.x && x <= placed.x + placed.w && y >= placed.y && y <= placed.y + placed.h) return id
+      continue
+    }
+    // Hidden by declutter this frame: not clickable
+    if (getOverlayFrame()) continue
+    // Fallback (no layout frame yet): match the card dimensions from drawToolCalls
     const isRunning = tool.state === 'running'
     const isError = tool.state === 'error'
     const labelLen = (`${tool.toolName}: ${tool.args}`).length * HIT_DETECTION.toolCharWidth + 12
@@ -51,7 +58,8 @@ export function findToolCallAt(
 
 /**
  * Find which agent's message bubble (if any) is at the given canvas-space coordinates.
- * Returns the agent id, or null.
+ * Uses the world-space rects recorded by the overlay layout pass (bubbles are
+ * placed in screen space and may flip/clamp, so there is no fixed anchor to derive).
  */
 export function findBubbleAgentAt(
   x: number,
@@ -61,46 +69,10 @@ export function findBubbleAgentAt(
 ): string | null {
   for (const agent of agents.values()) {
     if (agent.messageBubbles.length === 0) continue
-    const radius = agent.isMain ? NODE.radiusMain : NODE.radiusSub
-    const anchorX = agent.x + radius + AGENT_DRAW.bubbleAnchorOffset
-    let cursorY = agent.y + AGENT_DRAW.bubbleCursorY
     for (const bubble of agent.messageBubbles) {
-      const age = currentTime - bubble.time
-      const alpha = bubbleAlpha(age, agent.opacity)
-      if (alpha < 0.01) continue
-
-      // Use cached dimensions from the draw pass when available;
-      // fall back to char-width estimation for the first frame.
-      let bubbleW: number
-      let bubbleH: number
-      if (bubble._cachedW != null && bubble._cachedH != null) {
-        bubbleW = bubble._cachedW
-        bubbleH = bubble._cachedH
-      } else {
-        const isThinking = bubble.role === 'thinking'
-        const style = isThinking ? BUBBLE_DRAW.thinking : BUBBLE_DRAW.normal
-        const charW = HIT_DETECTION.bubbleCharWidth
-        const maxChars = Math.floor((BUBBLE_MAX_W - style.padding * 2) / charW)
-        let lineCount = 0
-        for (const para of bubble.text.split('\n')) {
-          if (para.trim() === '') { lineCount++; continue }
-          const words = para.split(/\s+/)
-          let line = ''
-          for (const word of words) {
-            if (line && (line + ' ' + word).length > maxChars) { lineCount++; line = word }
-            else line = line ? line + ' ' + word : word
-          }
-          if (line) lineCount++
-        }
-        if (lineCount === 0) lineCount = 1
-        bubbleW = BUBBLE_MAX_W
-        bubbleH = style.headerH + lineCount * style.lineH + style.padding
-      }
-
-      if (x >= anchorX && x <= anchorX + bubbleW && y >= cursorY && y <= cursorY + bubbleH) {
-        return agent.id
-      }
-      cursorY += bubbleH + BUBBLE_GAP
+      if (bubbleAlpha(currentTime - bubble.time, agent.opacity) < 0.01) continue
+      const r = getBubbleWorldRect(bubble)
+      if (r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return agent.id
     }
   }
   return null

@@ -2,16 +2,89 @@ import { Agent, NODE, CARD, TETHER } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { measureTextCached } from './render-cache'
 
-/** Truncate text with ellipsis to fit within maxWidth pixels */
+const truncateCache = new Map<string, string>()
+const TRUNCATE_CACHE_MAX = 3000
+
+/** Truncate text with ellipsis to fit within maxWidth pixels (memoized per font/width/text) */
 export function truncateText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  const key = `${ctx.font}|${Math.round(maxWidth * 4)}|${text}`
+  const hit = truncateCache.get(key)
+  if (hit !== undefined) return hit
+  const out = truncateUncached(ctx, text, maxWidth)
+  if (truncateCache.size > TRUNCATE_CACHE_MAX) truncateCache.clear()
+  truncateCache.set(key, out)
+  return out
+}
+
+function truncateUncached(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
   if (measureTextCached(ctx, text) <= maxWidth) return text
   let lo = 0, hi = text.length
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1
-    if (measureTextCached(ctx, text.slice(0, mid) + '\u2026') <= maxWidth) lo = mid
+    if (measureTextCached(ctx, text.slice(0, mid) + '…') <= maxWidth) lo = mid
     else hi = mid - 1
   }
-  return lo > 0 ? text.slice(0, lo) + '\u2026' : '\u2026'
+  return lo > 0 ? text.slice(0, lo) + '…' : '…'
+}
+
+/** Word-wrap text into lines that fit within maxW pixels, preserving newlines.
+ *  Force-breaks long unbroken tokens (paths, URLs) that exceed maxW. */
+export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = []
+  // Split on explicit newlines first to preserve line breaks
+  const paragraphs = text.split('\n')
+  for (const para of paragraphs) {
+    if (para.trim() === '') {
+      lines.push('') // preserve blank lines
+      continue
+    }
+    // Word-wrap within each paragraph, preserving leading whitespace
+    const leadingMatch = para.match(/^(\s*)/)
+    const leading = leadingMatch ? leadingMatch[1] : ''
+    const words = para.trimStart().split(/\s+/)
+    let currentLine = leading
+    for (const word of words) {
+      const test = currentLine.trimStart() ? `${currentLine} ${word}` : `${currentLine}${word}`
+      if (measureTextCached(ctx, test) > maxW && currentLine.trimStart()) {
+        lines.push(currentLine)
+        currentLine = leading + word
+      } else {
+        currentLine = test
+      }
+      // Force-break if a single token still exceeds maxW
+      while (measureTextCached(ctx, currentLine) > maxW && currentLine.length > 1) {
+        let breakAt = currentLine.length - 1
+        while (breakAt > 1 && measureTextCached(ctx, currentLine.slice(0, breakAt)) > maxW) { breakAt-- }
+        lines.push(currentLine.slice(0, breakAt))
+        currentLine = leading + currentLine.slice(breakAt)
+      }
+    }
+    if (currentLine) lines.push(currentLine)
+  }
+  return lines.length > 0 ? lines : ['']
+}
+
+/**
+ * Soft glow for the path that is currently built: wide low-alpha strokes under
+ * a crisp one. Replaces ctx.shadowBlur (expensive on every draw) with the same look.
+ */
+export function glowStroke(ctx: CanvasRenderingContext2D, color: string, width: number, glowAlpha = 0.3) {
+  const a = ctx.globalAlpha
+  ctx.strokeStyle = color
+  ctx.lineWidth = width * 4.5
+  ctx.globalAlpha = a * glowAlpha * 0.4
+  ctx.stroke()
+  ctx.lineWidth = width * 2.4
+  ctx.globalAlpha = a * glowAlpha
+  ctx.stroke()
+  ctx.lineWidth = width
+  ctx.globalAlpha = a
+  ctx.stroke()
+}
+
+/** Snap a CSS-pixel coordinate to the device pixel grid (crisp, non-shimmering text). */
+export function snapToDevice(v: number, dpr: number): number {
+  return Math.round(v * dpr) / dpr
 }
 
 export function drawTetherLine(ctx: CanvasRenderingContext2D, agent: Agent, transform: { x: number; y: number; scale: number }, canvasH: number) {

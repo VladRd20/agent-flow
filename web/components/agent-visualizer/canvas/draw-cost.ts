@@ -1,8 +1,9 @@
 import { Agent, ToolCallNode, NODE } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
-import { COST_RATE, MODEL_FAMILY_COST, COST_DRAW, COST_PANEL, MIN_VISIBLE_OPACITY } from '@/lib/canvas-constants'
+import { FONT, COST_RATE, MODEL_FAMILY_COST, COST_DRAW, COST_PANEL, MIN_VISIBLE_OPACITY } from '@/lib/canvas-constants'
 import { formatTokens } from '@/lib/utils'
 import { truncateText } from './draw-misc'
+import { getOverlayFrame } from './overlay-layout'
 
 /** Blended $/M-token rate for a model ID — first matching family wins,
  *  unknown models fall back to the Sonnet-class rate. */
@@ -58,7 +59,7 @@ export function drawCostLabels(
 
     // Floating cost pill
     const label = `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`
-    ctx.font = 'bold 9px monospace'
+    ctx.font = FONT.mono(9, 'bold')
     const labelW = ctx.measureText(label).width
     const pillW = labelW + COST_DRAW.pillPadding
     const pillH = COST_DRAW.pillHeight
@@ -157,8 +158,10 @@ export function drawCostSummaryPanel(
     .sort((a, b) => b.cost - a.cost)
 
   // Panel dimensions — positioned top-right
-  const dpr = ctx.canvas.width / ctx.canvas.offsetWidth
-  const canvasW = ctx.canvas.width / dpr
+  // Viewport width comes from the per-frame overlay layout (explicit dpr-independent CSS px);
+  // the canvas-size derivation is only a fallback for callers without a frame.
+  const frame = getOverlayFrame()
+  const canvasW = frame ? frame.vw : (ctx.canvas.clientWidth || ctx.canvas.width)
   const panelW = COST_PANEL.width
   const panelX = canvasW - panelW - COST_PANEL.xMargin
   const panelY = COST_PANEL.yStart
@@ -183,13 +186,13 @@ export function drawCostSummaryPanel(
   let y = panelY + 8
 
   // Header: total cost
-  ctx.font = 'bold 11px monospace'
+  ctx.font = FONT.mono(12, 'bold')
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
   ctx.fillStyle = COLORS.costText
   ctx.fillText(`$${totalCost.toFixed(3)}`, panelX + COST_PANEL.contentPadding, y)
 
-  ctx.font = '9px monospace'
+  ctx.font = FONT.mono(10)
   ctx.fillStyle = COLORS.textMuted
   ctx.fillText(`${formatTokens(totalTokens)} tokens`, panelX + COST_PANEL.contentPadding + ctx.measureText(`$${totalCost.toFixed(3)}`).width + 14, y + 2)
 
@@ -216,7 +219,7 @@ export function drawCostSummaryPanel(
     ctx.fill()
 
     // Agent name
-    ctx.font = '8px monospace'
+    ctx.font = FONT.mono(9)
     ctx.fillStyle = COLORS.textPrimary
     ctx.textAlign = 'left'
     ctx.fillText(truncateText(ctx, a.name, barW - 50), panelX + COST_PANEL.contentPadding + COST_PANEL.barInset, y + 3)
@@ -233,7 +236,7 @@ export function drawCostSummaryPanel(
   if (toolList.length > 0) {
     y += sectionGap
 
-    ctx.font = '8px monospace'
+    ctx.font = FONT.mono(9)
     ctx.fillStyle = COLORS.textMuted
     ctx.textAlign = 'left'
     ctx.fillText('BY TOOL', panelX + COST_PANEL.contentPadding, y)
@@ -258,7 +261,7 @@ export function drawCostSummaryPanel(
       ctx.globalAlpha = 1
 
       // Tool name
-      ctx.font = '8px monospace'
+      ctx.font = FONT.mono(9)
       ctx.fillStyle = toolTypeColor(t.name)
       ctx.textAlign = 'left'
       ctx.fillText(truncateText(ctx, t.name, barW - 50), panelX + COST_PANEL.contentPadding + COST_PANEL.barInset, y + 3)

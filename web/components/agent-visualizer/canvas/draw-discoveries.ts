@@ -1,6 +1,7 @@
 import { Agent, Discovery } from '@/lib/agent-types'
 import { COLORS, getDiscoveryTypeColor } from '@/lib/colors'
-import { getDiscoveryCardDimensions } from '@/lib/canvas-constants'
+import { getDiscoveryCardDimensions, FONT } from '@/lib/canvas-constants'
+import { glowStroke } from './draw-misc'
 import { truncateText } from './draw-misc'
 
 export function drawDiscoveryConnections(ctx: CanvasRenderingContext2D, discoveries: Discovery[], agents: Map<string, Agent>) {
@@ -45,15 +46,10 @@ export function drawDiscoveries(ctx: CanvasRenderingContext2D, discoveries: Disc
 
     // Selection glow
     if (isSelected) {
-      ctx.shadowColor = typeColor
-      ctx.shadowBlur = 12
-      ctx.strokeStyle = typeColor + '80'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-      ctx.shadowBlur = 0
+      glowStroke(ctx, typeColor + 'a0', 1.5, 0.3)
     }
 
-    ctx.fillStyle = typeColor + '60'
+    ctx.fillStyle = typeColor + 'a0'
     ctx.fillRect(cardX, cardY, 2, cardH)
 
     if (!isSelected) {
@@ -63,13 +59,13 @@ export function drawDiscoveries(ctx: CanvasRenderingContext2D, discoveries: Disc
     }
 
     ctx.fillStyle = typeColor
-    ctx.font = 'bold 8px monospace'
+    ctx.font = FONT.mono(8, 'bold')
     ctx.textAlign = 'left'
     ctx.textBaseline = 'top'
     ctx.fillText(truncateText(ctx, disc.label, cardW - 10), cardX + 6, cardY + 3)
 
     ctx.fillStyle = COLORS.textMuted
-    ctx.font = '7px monospace'
+    ctx.font = FONT.mono(7)
     for (let i = 0; i < lines.length; i++) {
       ctx.fillText(truncateText(ctx, lines[i], cardW - 10), cardX + 6, cardY + 14 + i * 11)
     }
