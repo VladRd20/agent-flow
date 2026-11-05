@@ -67,6 +67,8 @@ export function useVSCodeBridge(): BridgeHookResult {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const selectedSessionIdRef = useRef<string | null>(null)
   const sessionEventsRef = useRef<Map<string, SimulationEvent[]>>(new Map())
+  /** Per-session ms timestamp of the last lastActivityTime state update (throttle gate). */
+  const lastActivityTouchRef = useRef<Map<string, number>>(new Map())
   /** True while a session switch is pending (between auto-select and useLayoutEffect).
    *  Prevents the animation frame from processing events in the wrong simulation context. */
   const sessionSwitchPendingRef = useRef(false)
@@ -136,12 +138,18 @@ export function useVSCodeBridge(): BridgeHookResult {
         pushCapped(buf, simEvent, MAX_SESSION_EVENT_BUFFER)
         sessionEventsRef.current.set(event.sessionId, buf)
         // Keep lastActivityTime roughly current (throttled: one state update per 5s per session)
+        // Gated by a ref so setSessions isn't even called (no React render
+        // scheduled) for the vast majority of events.
         const now = Date.now()
-        setSessions(prev => {
-          const s = prev.find(x => x.id === event.sessionId)
-          if (!s || now - s.lastActivityTime < 5000) return prev
-          return prev.map(x => x.id === event.sessionId ? { ...x, lastActivityTime: now } : x)
-        })
+        const lastTouched = lastActivityTouchRef.current.get(event.sessionId) ?? 0
+        if (now - lastTouched >= 5000) {
+          lastActivityTouchRef.current.set(event.sessionId, now)
+          setSessions(prev => {
+            const s = prev.find(x => x.id === event.sessionId)
+            if (!s || now - s.lastActivityTime < 5000) return prev
+            return prev.map(x => x.id === event.sessionId ? { ...x, lastActivityTime: now } : x)
+          })
+        }
       }
 
       // Deliver to pending if session matches (ref is always current).
@@ -326,6 +334,7 @@ export function useVSCodeBridge(): BridgeHookResult {
     // many opened/closed sessions keeps every closed session's full event
     // history in memory forever.
     sessionEventsRef.current.delete(sessionId)
+    lastActivityTouchRef.current.delete(sessionId)
   }, [])
 
   const bridgeOpenFile = useCallback((filePath: string, line?: number) => {
