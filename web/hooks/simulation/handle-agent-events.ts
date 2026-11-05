@@ -9,6 +9,7 @@ import { withTimelineModel } from '@/lib/timeline-models'
 import { pushTimelineBlock, type ProcessEventContext, type MutableEventState } from './process-event'
 import { edgeId, asString, asBoolean } from './types'
 import { reviveHiddenAgent } from './hidden-agents'
+import { getViewAspect } from '@/lib/view-aspect'
 import { computeMainAnchors } from './main-anchors'
 
 export function handleAgentSpawn(
@@ -118,7 +119,7 @@ export function handleAgentSpawn(
     // cell instead of on top of the existing cluster(s).
     const mains = Array.from(state.agents.values()).filter(a => a.isMain)
     if (mains.length > 0) {
-      const anchors = computeMainAnchors([...state.agents.values(), { id: name, isMain: true, parentId: null, spawnTime: currentTime }])
+      const anchors = computeMainAnchors([...state.agents.values(), { id: name, isMain: true, parentId: null, spawnTime: currentTime }], getViewAspect())
       const at = anchors.get(name)
       if (at) { x = at.x; y = at.y }
     }
