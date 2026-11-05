@@ -156,7 +156,7 @@ function DesktopTopBar({
       style={{ top: 'var(--af-top)', left: 'var(--af-left)', right: 'var(--af-right)', zIndex: Z.topBar }}
     >
       {/* Session tabs — scrollable, takes available space */}
-      {sessions.length > 1 && (
+      {sessions.length > 0 && (
         <div className="min-w-0 flex-shrink pointer-events-auto">
           <SessionTabs
             sessions={sessions}
@@ -245,7 +245,7 @@ function MobileTopBar({
         zIndex: Z.topBar,
       }}
     >
-      {sessions.length > 1 && (
+      {sessions.length > 0 && (
         <div className="min-w-0 flex-1 pointer-events-auto">
           <SessionTabs
             sessions={sessions}

@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 import { COLORS } from '@/lib/colors'
 import type { SessionInfo } from '@/lib/vscode-bridge'
 import { useIsMobile } from '@/hooks/use-is-mobile'
+import { ALL_SESSIONS_ID } from '@/lib/all-sessions'
 
 interface SessionTabsProps {
   sessions: SessionInfo[]
@@ -71,6 +72,45 @@ export function SessionTabs({
       style={{ touchAction: 'pan-x', scrollPaddingInline: 12 }}
     >
       <div role="tablist" aria-label="Sessions" className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
+        {sessions.length > 0 && (() => {
+          const isSelected = selectedSessionId === ALL_SESSIONS_ID
+          const anyActive = sessions.some(x => x.status === 'active')
+          return (
+            <div
+              ref={(el) => setTabRef(ALL_SESSIONS_ID, el)}
+              className="group snap-start rounded transition-all flex items-center flex-shrink-0"
+              style={{
+                background: isSelected ? COLORS.tabSelectedBg : COLORS.tabInactiveBg,
+                border: `1px solid ${isSelected ? COLORS.tabSelectedBorder : COLORS.tabInactiveBorder}`,
+                color: isSelected ? COLORS.holoBright : COLORS.textMuted,
+                minHeight: isMobile ? 32 : undefined,
+              }}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                aria-label={`All sessions (${sessions.length})`}
+                onClick={() => onSelectSession(ALL_SESSIONS_ID)}
+                className="af-hit pl-1.5 py-0.5 pr-1.5 flex items-center gap-1 min-w-0 self-stretch"
+                style={{ whiteSpace: 'nowrap', color: 'inherit' }}
+              >
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  style={{
+                    background: anyActive ? COLORS.complete : COLORS.idle + '40',
+                    boxShadow: anyActive ? `0 0 4px ${COLORS.complete}` : 'none',
+                  }}
+                />
+                <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true" className="flex-shrink-0">
+                  <rect x="0" y="0" width="4" height="4" rx="0.8" /><rect x="6" y="0" width="4" height="4" rx="0.8" />
+                  <rect x="0" y="6" width="4" height="4" rx="0.8" /><rect x="6" y="6" width="4" height="4" rx="0.8" />
+                </svg>
+                <span>All · {sessions.length}</span>
+              </button>
+            </div>
+          )
+        })()}
         {sessions.map(session => {
           const isSelected = session.id === selectedSessionId
           const isActive = session.status === 'active'

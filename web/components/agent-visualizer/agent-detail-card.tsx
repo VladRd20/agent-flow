@@ -21,11 +21,14 @@ interface AgentDetailCardProps {
     currentTool?: string
   }
   onClose: () => void
+  /** All view only: switch to this node's own session tab */
+  onOpenSession?: () => void
 }
 
 export function AgentDetailCard({
   agent,
   onClose,
+  onOpenSession,
 }: AgentDetailCardProps) {
   const contextPercent = Math.round((agent.tokensUsed / agent.tokensMax) * 100)
   const stateColor = getStateColor(agent.state)
@@ -127,6 +130,17 @@ export function AgentDetailCard({
         <span>{agent.timeAlive.toFixed(1)}s alive</span>
         <span className="capitalize" style={{ color: stateColor }}>{agent.state}</span>
       </div>
+
+      {onOpenSession && (
+        <button
+          type="button"
+          onClick={onOpenSession}
+          className="af-hit mb-3 px-2 py-1 rounded text-[10px] font-mono"
+          style={{ background: COLORS.tabInactiveBg, border: `1px solid ${COLORS.tabSelectedBorder}`, color: COLORS.holoBright }}
+        >
+          Open session
+        </button>
+      )}
 
       {/* Current tool */}
       {agent.currentTool && (

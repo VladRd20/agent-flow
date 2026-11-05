@@ -40,6 +40,8 @@ interface CanvasProps {
   zoomToFitTrigger?: number
   pauseAutoFit?: boolean
   onAgentClick: (agentId: string | null) => void
+  /** Double-click on a node (All view: open that node's session) */
+  onAgentOpen?: (agentId: string) => void
   onAgentHover: (agentId: string | null) => void
   onAgentDrag: (agentId: string, x: number, y: number) => void
   onContextMenu: (e: React.MouseEvent, type: 'agent' | 'edge' | 'canvas', id?: string) => void
@@ -55,7 +57,7 @@ interface CanvasProps {
 export function AgentCanvas({
   simulationRef,
   selectedAgentId, hoveredAgentId, showStats, showHexGrid, zoomToFitTrigger, pauseAutoFit,
-  onAgentClick, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished,
+  onAgentClick, onAgentOpen, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -157,7 +159,7 @@ export function AgentCanvas({
     showCostOverlay, selectedToolCallId, selectedDiscoveryId, showFinished: !!showFinished,
     liveAgents: sim.agents,
     simTime: sim.currentTime, pauseAutoFit, dimensions,
-    onAgentDrag, onAgentClick, onAgentHover, onContextMenu,
+    onAgentDrag, onAgentClick, onAgentOpen, onAgentHover, onContextMenu,
     onToolCallClick, onDiscoveryClick,
     isDragging: prev?.isDragging ?? false,
   })

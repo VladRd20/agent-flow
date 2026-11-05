@@ -155,7 +155,7 @@ export function drawCostSummaryPanel(
 
   // Per-agent breakdown sorted by cost desc
   const agentBreakdown = agentList
-    .map(a => ({ name: a.name, tokens: a.tokensUsed, cost: agentCost(a.tokensUsed, a.model) }))
+    .map(a => ({ name: a.name, isMain: a.isMain, tokens: a.tokensUsed, cost: agentCost(a.tokensUsed, a.model) }))
     .sort((a, b) => b.cost - a.cost)
   const totalCost = agentBreakdown.reduce((s, a) => s + a.cost, 0)
 
@@ -234,7 +234,7 @@ export function drawCostSummaryPanel(
     ctx.fill()
 
     // Bar fill
-    ctx.fillStyle = a.name.includes('main') || agentBreakdown.length === 1
+    ctx.fillStyle = a.isMain || a.name.includes('main') || agentBreakdown.length === 1
       ? COLORS.barFillMain
       : COLORS.barFillSub
     ctx.beginPath()
