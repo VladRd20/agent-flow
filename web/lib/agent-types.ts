@@ -31,6 +31,8 @@ export interface Agent {
   vy: number
   pinned: boolean
   isMain: boolean
+  /** Owning session (set in the All-sessions view, where `id` is namespaced and `name` is display-only) */
+  sessionId?: string
   /** Which agent runtime produced this agent — used to pick the brand logo.
    *  Optional for forward compat with events that don't carry it (defaults to 'claude'). */
   runtime?: 'claude' | 'codex'
