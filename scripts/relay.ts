@@ -174,14 +174,16 @@ function waitForDrain(res: http.ServerResponse, isClosed: () => boolean): Promis
  *  client went away or stalled. */
 async function replayToClient(
   res: http.ServerResponse,
-  sessionIds: string[],
+  getSessionIds: () => string[],
   since: Map<string, number>,
   isClosed: () => boolean,
+  onCaughtUp: () => void,
 ): Promise<boolean> {
   const cursor = new Map(since)
   for (;;) {
     let sentAny = false
-    for (const sid of sessionIds) {
+    // Re-evaluated each pass: sessions created while we were awaiting drain are included
+    for (const sid of getSessionIds()) {
       const buf = eventBuffer.get(sid)
       if (!buf) continue
       let start = firstIndexAfter(buf, cursor.get(sid) ?? 0)
@@ -200,7 +202,11 @@ async function replayToClient(
         start = firstIndexAfter(buf, cursor.get(sid) ?? 0)
       }
     }
-    if (!sentAny) return true
+    if (!sentAny) {
+      // Still synchronous with the empty pass above: no event can slip in before the client joins
+      onCaughtUp()
+      return true
+    }
   }
 }
 
@@ -665,7 +671,8 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
       res.on('close', cleanupClient)
       res.on('error', cleanupClient)
 
-      // Send current session list (Claude + Codex)
+      // Current session list (Claude + Codex)
+      const buildSessionList = (): SessionInfo[] => {
       const sessionList: SessionInfo[] = []
       for (const session of sessions.values()) {
         if (!session.sessionDetected) continue
@@ -676,8 +683,11 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         })
       }
       if (codexWatcher) sessionList.push(...codexWatcher.getActiveSessions())
-      if (sessionList.length > 0) {
-        sendSSE(res, { type: 'session-list', sessions: sessionList })
+      return sessionList
+      }
+      const initialList = buildSessionList()
+      if (initialList.length > 0) {
+        sendSSE(res, { type: 'session-list', sessions: initialList })
       }
 
       // Replay buffered events for ALL known sessions (not just the active one),
@@ -688,8 +698,11 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
       // caught up, so no event is skipped or delivered out of order.
       let since = new Map<string, number>()
       try { since = resolveSince(new URL(req.url ?? '/', 'http://localhost').searchParams, BOOT_ID) } catch { /* bad URL: full replay */ }
-      void replayToClient(res, sessionList.map(s => s.id), since, () => closed).then((ok) => {
-        if (!ok || closed) return
+      void replayToClient(res, () => buildSessionList().map(s => s.id), since, () => closed, () => {
+        if (closed) return
+        // Final list (sessions that appeared/changed during replay), then join live
+        const finalList = buildSessionList()
+        if (finalList.length > 0) sendSSE(res, { type: 'session-list', sessions: finalList })
         sseClients.add(res)
         log(`[sse] Client connected (${sseClients.size} total)`)
       })

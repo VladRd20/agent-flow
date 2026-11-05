@@ -86,3 +86,20 @@ test('chunked folding equals one big fold', () => {
   }
   assert.deepEqual(norm(st), norm(whole))
 })
+
+test('a shared skippedTools map lets tool_end in a later slice find its skipped start', () => {
+  const events = synthetic(1)
+  // split between the tool start and its end
+  const startIdx = events.findIndex(e => e.type === 'tool_call_start')
+  const first = events.slice(0, startIdx + 1)
+  const second = events.slice(startIdx + 1)
+  const cutoff = events[events.length - 1].time + 100 // everything is "expired"
+  const shared = new Map()
+  let st = createEmptyState()
+  const ctx = makeCtx()
+  st = foldEvents(first, st, ctx, { resolveTime: e => e.time, visualCutoff: cutoff, skippedTools: shared }).state
+  st = foldEvents(second, st, ctx, { resolveTime: e => e.time, visualCutoff: cutoff, skippedTools: shared }).state
+  const ref = sequential(events, makeCtx())
+  assert.deepEqual(norm(st, cutoff).fileAttention, norm(ref, cutoff).fileAttention)
+  assert.equal(shared.size, 0, 'consumed by the matching tool_end')
+})

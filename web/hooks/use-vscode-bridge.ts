@@ -187,7 +187,12 @@ export function useVSCodeBridge(): BridgeHookResult {
           lastActivityTouchRef.current.set(event.sessionId, now)
           setSessions(prev => {
             const s = prev.find(x => x.id === event.sessionId)
-            if (!s || now - s.lastActivityTime < 5000) return prev
+            if (!s) {
+              // Session not listed yet: don't suppress the next update
+              lastActivityTouchRef.current.delete(event.sessionId!)
+              return prev
+            }
+            if (now - s.lastActivityTime < 5000) return prev
             return prev.map(x => x.id === event.sessionId ? { ...x, lastActivityTime: now } : x)
           })
         }
@@ -386,6 +391,8 @@ export function useVSCodeBridge(): BridgeHookResult {
     // history in memory forever.
     sessionEventsRef.current.delete(sessionId)
     lastActivityTouchRef.current.delete(sessionId)
+    // Forget the seq cursor too, so a reappearing session replays its history
+    seqTrackerRef.current.forget(sessionId)
   }, [])
 
   const bridgeOpenFile = useCallback((filePath: string, line?: number) => {

@@ -135,12 +135,18 @@ export function foldEvents(
   events: readonly SimulationEvent[],
   prev: SimulationState,
   ctx: ProcessEventContext,
-  opts: { resolveTime: (event: SimulationEvent) => number; visualCutoff?: number },
+  opts: {
+    resolveTime: (event: SimulationEvent) => number
+    visualCutoff?: number
+    /** Hold ONE map across all slices of a backlog drain so a tool_end in a later
+     *  slice still finds its skipped start. Defaults to a per-call map. */
+    skippedTools?: Map<string, { args: string; inputData?: Record<string, unknown> }>
+  },
 ): { state: SimulationState; applied: SimulationEvent[] } {
   if (events.length === 0) return { state: prev, applied: [] }
   const state = copyCollections(prev)
   state.visualCutoff = opts.visualCutoff
-  state.skippedTools = new Map()
+  state.skippedTools = opts.skippedTools ?? new Map()
   const applied: SimulationEvent[] = []
   let currentTime = prev.currentTime
   for (const event of events) {
