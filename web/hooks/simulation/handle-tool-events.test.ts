@@ -130,3 +130,21 @@ test('tool_call_end attributes token cost to the call that actually just complet
   assert.equal(fileAAttention?.totalTokens, 100, "fileA's own tokenCost from its own completion should be unaffected")
   assert.equal(fileBAttention?.totalTokens, 999, "fileB's tokenCost must be attributed to fileB, not re-added to the older, already-complete fileA call")
 })
+
+test('tool_call_end stops adding token estimates once the agent has an authoritative context_update', async () => {
+  const { handleContextUpdate } = await import('./handle-message-events')
+  const state = makeState('agent-1')
+  const ctx = makeContext()
+
+  handleToolCallEnd({ agent: 'agent-1', tool: 'Read', tokenCost: 500 }, 1, state, ctx)
+  assert.equal(state.agents.get('agent-1')!.tokensUsed, 500, 'estimates accumulate before any authoritative update')
+
+  handleContextUpdate({ agent: 'agent-1', tokens: 10_000, isAuthoritative: true }, state)
+  handleToolCallEnd({ agent: 'agent-1', tool: 'Read', tokenCost: 500 }, 2, state, ctx)
+  assert.equal(state.agents.get('agent-1')!.tokensUsed, 10_000)
+
+  // After compaction the relay sends a non-authoritative estimate; estimates resume.
+  handleContextUpdate({ agent: 'agent-1', tokens: 100 }, state)
+  handleToolCallEnd({ agent: 'agent-1', tool: 'Read', tokenCost: 50 }, 3, state, ctx)
+  assert.equal(state.agents.get('agent-1')!.tokensUsed, 150)
+})

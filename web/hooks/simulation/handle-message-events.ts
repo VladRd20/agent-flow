@@ -75,6 +75,7 @@ export function handleContextUpdate(
     state.agents.set(agentName, {
       ...agent,
       tokensUsed: tokens,
+      tokensAuthoritative: payload.isAuthoritative === true,
       tokensMax: tokensMaxOverride ?? agent.tokensMax,
       contextBreakdown: breakdown || agent.contextBreakdown,
       state: agent.state === 'complete' ? 'complete' : 'thinking'

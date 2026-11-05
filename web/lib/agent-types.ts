@@ -19,6 +19,9 @@ export interface Agent {
   parentId: string | null
   tokensUsed: number
   tokensMax: number
+  /** True once a context_update reported an authoritative total (transcript usage);
+   *  per-tool token cost estimates are then no longer added to tokensUsed. */
+  tokensAuthoritative?: boolean
   contextBreakdown: ContextBreakdown
   toolCalls: number
   timeAlive: number

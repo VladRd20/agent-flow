@@ -183,6 +183,49 @@ describe('background subagents (#92)', () => {
   })
 })
 
+describe('prescan of background subagents', () => {
+  function prescan(entries: unknown[]) {
+    const { session, events, parser, feed } = setup()
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-flow-parser-'))
+    const file = path.join(dir, 'session.jsonl')
+    const history = entries.map(e => JSON.stringify(e)).join('\n') + '\n'
+    fs.writeFileSync(file, history)
+    parser.prescanExistingContent(file, Buffer.byteLength(history), session)
+    return { session, events, parser, feed }
+  }
+
+  it('queues a spawn for a background agent that is still running after restart', () => {
+    const { session, parser, events, feed } = prescan([
+      agentToolUse('toolu_live', 'Still running'),
+      agentToolResult('toolu_live', asyncLaunch()),
+    ])
+    assert.deepEqual(session.pendingCatchUpSpawns.map(s => s.childName), ['Still running'])
+    parser.emitPendingSubagentSpawns(session, SESSION_ID)
+    assert.equal(ofType(events, 'agent_spawn').length, 1)
+
+    feed(taskNotification('toolu_live'))
+    assert.deepEqual(ofType(events, 'agent_complete').map(e => e.payload), [{ name: 'Still running' }])
+  })
+
+  it('does not spawn a background agent whose notification is already in history', () => {
+    const { session } = prescan([
+      agentToolUse('toolu_old', 'Already done'),
+      agentToolResult('toolu_old', asyncLaunch()),
+      taskNotification('toolu_old'),
+    ])
+    assert.equal(session.pendingCatchUpSpawns.length, 0)
+    assert.ok(session.spawnedSubagents.has('Already done'))
+  })
+
+  it('does not spawn a foreground agent that completed in history', () => {
+    const { session } = prescan([
+      agentToolUse('toolu_fg', 'Foreground'),
+      agentToolResult('toolu_fg', { status: 'completed', content: [] }),
+    ])
+    assert.equal(session.pendingCatchUpSpawns.length, 0)
+  })
+})
+
 describe('subagent model (#91)', () => {
   it("emits the subagent's resolved model from the launch result", () => {
     const { events, feed } = setup()

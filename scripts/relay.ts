@@ -10,6 +10,7 @@ import * as os from 'os'
 
 import { HookServer } from '../extension/src/hook-server'
 import { AgentEvent, SessionInfo, WatchedSession } from '../extension/src/protocol'
+import { buildContextPayload } from '../extension/src/context-usage'
 import { TranscriptParser } from '../extension/src/transcript-parser'
 import { readNewFileLines, foldPathCase } from '../extension/src/fs-utils'
 import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime } from '../extension/src/subagent-watcher'
@@ -148,12 +149,10 @@ function elapsed(sessionId?: string): number {
 }
 
 function emitContextUpdate(agentName: string, session: WatchedSession, sessionId?: string) {
-  const bd = session.contextBreakdown
-  const total = bd.systemPrompt + bd.userMessages + bd.toolResults + bd.reasoning + bd.subagentResults
   broadcastEvent({
     time: elapsed(sessionId),
     type: 'context_update',
-    payload: { agent: agentName, tokens: total, breakdown: { ...bd } },
+    payload: { agent: agentName, ...buildContextPayload(session, agentName) },
     sessionId,
   })
 }

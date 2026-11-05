@@ -224,6 +224,8 @@ export interface WatchedSession {
   modelDetectedAgents: Map<string, string>
   permissionTimer: NodeJS.Timeout | null
   permissionEmitted: boolean
+  /** Latest authoritative context size (from transcript `message.usage`) per agent name. */
+  contextUsage?: Map<string, number>
   contextBreakdown: {
     systemPrompt: number
     userMessages: number

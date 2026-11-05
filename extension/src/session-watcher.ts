@@ -14,6 +14,7 @@ import { followSession } from './session-relocation'
 import { handlePermissionDetection } from './permission-detection'
 import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime } from './subagent-watcher'
 import { createLogger } from './logger'
+import { buildContextPayload } from './context-usage'
 
 const log = createLogger('SessionWatcher')
 
@@ -576,15 +577,12 @@ export class SessionWatcher implements AgentSessionWatcher {
 
   /** Emit a context_update event with cumulative token breakdown */
   private emitContextUpdate(agentName: string, session: WatchedSession, sessionId?: string): void {
-    const bd = session.contextBreakdown
-    const total = bd.systemPrompt + bd.userMessages + bd.toolResults + bd.reasoning + bd.subagentResults
     this.emit({
       time: this.elapsed(sessionId),
       type: 'context_update',
       payload: {
         agent: agentName,
-        tokens: total,
-        breakdown: { ...bd },
+        ...buildContextPayload(session, agentName),
       },
     }, sessionId)
   }

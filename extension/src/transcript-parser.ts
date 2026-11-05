@@ -26,6 +26,7 @@ import {
 import { summarizeInput, summarizeResult, extractInputData, detectError, buildDiscovery } from './tool-summarizer'
 import { estimateTokensFromContent, estimateTokensFromText } from './token-estimator'
 import { createLogger } from './logger'
+import { recordContextUsage, resetContextForCompaction } from './context-usage'
 
 const log = createLogger('TranscriptParser')
 
@@ -176,6 +177,17 @@ export class TranscriptParser {
       return
     }
 
+    // Context compaction: the estimates accumulated so far no longer describe
+    // the live context. Reset them and wait for the next assistant usage.
+    if (parsed.type === 'system' && parsed.subtype === 'compact_boundary') {
+      const compactSession = sessionId ? this.delegate.getSession(sessionId) : undefined
+      if (compactSession) {
+        resetContextForCompaction(compactSession, agentName)
+        this.delegate.emitContextUpdate(agentName, compactSession, sessionId)
+      }
+      return
+    }
+
     // Only process actual conversation entries (user/assistant turns)
     if (parsed.type !== 'user' && parsed.type !== 'assistant') {
       return
@@ -219,6 +231,11 @@ export class TranscriptParser {
         type: 'model_detected',
         payload: { agent: agentName, model: msg.model },
       }, sessionId)
+    }
+
+    // Authoritative context size: latest assistant usage for this agent.
+    if (session && entry.type === 'assistant') {
+      recordContextUsage(session, agentName, (msg as { usage?: unknown }).usage)
     }
 
     // Dedup set for messages (context compression replays old messages)
@@ -609,7 +626,16 @@ export class TranscriptParser {
           // <task-notification> that arrives later can complete them.
           if (entry.type === 'user' && entry.message) {
             const notification = parseTaskNotification(userContentText(entry.message.content))
-            if (notification) { this.backgroundSubagents.delete(notification.toolUseId) }
+            if (notification) {
+              this.backgroundSubagents.delete(notification.toolUseId)
+              // The background agent finished within the scanned history: it is
+              // done, so it must not be re-spawned as still running.
+              const finished = pendingSubagentSpawns.get(notification.toolUseId)
+              if (finished) {
+                session.spawnedSubagents.add(finished.childName)
+                pendingSubagentSpawns.delete(notification.toolUseId)
+              }
+            }
           }
           // Build dedup sets for tool_use blocks and messages + accumulate token counts
           const isUser = entry.message?.role === 'user' || entry.message?.role === 'human'
@@ -637,7 +663,8 @@ export class TranscriptParser {
               } else if (block.type === 'tool_result') {
                 const resultBlock = block as ToolResultBlock
                 const childName = resultBlock.tool_use_id ? this.subagentChildNames.get(resultBlock.tool_use_id) : undefined
-                if (childName && parseAgentToolUseResult(entry.toolUseResult).isAsync) {
+                const isAsyncLaunch = parseAgentToolUseResult(entry.toolUseResult).isAsync
+                if (childName && isAsyncLaunch) {
                   this.backgroundSubagents.set(resultBlock.tool_use_id, { childName, parent: ORCHESTRATOR_NAME, sessionId: session.sessionId })
                 }
                 // Clear matched pending tool call
@@ -645,7 +672,9 @@ export class TranscriptParser {
                   session.pendingToolCalls.delete(resultBlock.tool_use_id)
                   // Task/Agent completed within the pre-scanned history — mark
                   // its name known so no live path re-spawns a node for it.
-                  const pendingSpawn = pendingSubagentSpawns.get(resultBlock.tool_use_id)
+                  // A background (async) launch's tool_result only confirms the
+                  // launch — it stays pending until its <task-notification>.
+                  const pendingSpawn = isAsyncLaunch ? undefined : pendingSubagentSpawns.get(resultBlock.tool_use_id)
                   if (pendingSpawn) {
                     session.spawnedSubagents.add(pendingSpawn.childName)
                     pendingSubagentSpawns.delete(resultBlock.tool_use_id)
@@ -679,6 +708,12 @@ export class TranscriptParser {
               session.seenMessageHashes.add(hashKey)
               session.contextBreakdown.userMessages += estimateTokensFromText(text)
             }
+          }
+          // Authoritative context size = latest assistant usage; compaction resets.
+          if (entry.type === 'assistant') {
+            recordContextUsage(session, ORCHESTRATOR_NAME, (entry.message as { usage?: unknown } | undefined)?.usage)
+          } else if ((entry as { type?: string }).type === 'system' && (entry as { subtype?: string }).subtype === 'compact_boundary') {
+            resetContextForCompaction(session, ORCHESTRATOR_NAME)
           }
           // Extract model from first assistant message
           if (entry.type === 'assistant' && isRealModelId(entry.message?.model) && !session.model) {
