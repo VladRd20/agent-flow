@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, type MutableRefObject } from 'react'
 import { Agent, ToolCallNode, Discovery, ANIM } from '@/lib/agent-types'
-import { getBottomInset } from '@/lib/layout-insets'
+import { getBottomInset, getTopInset } from '@/lib/layout-insets'
 import { computeFitTransform as computeFitTransformPure, createFitCache, type Transform } from '@/lib/compute-fit-transform'
 
 export type { Transform }
@@ -52,7 +52,7 @@ export function useCanvasCamera({
   const computeFitTransform = useCallback((): Transform | null => {
     const { agents, toolCalls, discoveries, dimensions, selectedAgentId } = drawPropsRef.current
     return computeFitTransformPure(
-      { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime: simTimeRef.current ?? 0, bottomInset: getBottomInset() },
+      { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime: simTimeRef.current ?? 0, bottomInset: getBottomInset(), topInset: getTopInset() },
       fitCacheRef.current,
     )
   }, [drawPropsRef, simTimeRef])
@@ -85,15 +85,19 @@ export function useCanvasCamera({
   }, [mainCanvasRef])
 
   /** Call from draw loop to update inertia and auto-fit lerp */
-  const updateCamera = useCallback((isDragging: boolean, pauseAutoFit?: boolean) => {
+  const updateCamera = useCallback((isDragging: boolean, pauseAutoFit?: boolean, deltaTime = 1 / 60) => {
     const transform = transformRef.current
+    // Inertia and easing constants are tuned per 60fps frame; scale them by the
+    // real frame time so 30fps (touch) and throttled frames feel the same.
+    const frames = Math.min(Math.max(deltaTime * 60, 0), 4)
 
     // Pan inertia
     const inertia = panVelocityRef.current
     if (inertia.active) {
-      transformRef.current = { ...transform, x: transform.x + inertia.vx, y: transform.y + inertia.vy }
-      inertia.vx *= ANIM.inertiaDecay
-      inertia.vy *= ANIM.inertiaDecay
+      transformRef.current = { ...transform, x: transform.x + inertia.vx * frames, y: transform.y + inertia.vy * frames }
+      const decay = Math.pow(ANIM.inertiaDecay, frames)
+      inertia.vx *= decay
+      inertia.vy *= decay
       if (Math.abs(inertia.vx) < 0.1 && Math.abs(inertia.vy) < 0.1) {
         inertia.active = false
       }
@@ -108,7 +112,7 @@ export function useCanvasCamera({
     // Smooth lerp toward target
     const target = targetTransformRef.current
     if (target) {
-      const lerpSpeed = ANIM.autoFitLerp
+      const lerpSpeed = 1 - Math.pow(1 - ANIM.autoFitLerp, frames)
       const t = transformRef.current
       const nx = t.x + (target.x - t.x) * lerpSpeed
       const ny = t.y + (target.y - t.y) * lerpSpeed

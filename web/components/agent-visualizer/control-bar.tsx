@@ -102,12 +102,9 @@ function useBarMetrics(ref: React.RefObject<HTMLElement | null>, isMobile: boole
       const h = el.getBoundingClientRect().height
       if (h <= 0) return
       document.documentElement.style.setProperty('--af-bottom-bar-h', `${Math.round(h)}px`)
-      if (isMobile) {
-        const bottom = parseFloat(getComputedStyle(el).bottom) || 0
-        setBottomInset(h + bottom + 8)
-      } else {
-        setBottomInset(0)
-      }
+      // The bar floats over the canvas at every size, so fit-to-view always leaves room for it
+      const bottom = parseFloat(getComputedStyle(el).bottom) || 0
+      setBottomInset(h + bottom + 8)
     }
     publish()
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(publish) : null

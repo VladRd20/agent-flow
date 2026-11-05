@@ -51,7 +51,8 @@ test('computeFitTransform recomputes when viewport dimensions change, even if co
   // Same agents/toolCalls/discoveries/selectedAgentId references (no sim event
   // occurred), but the viewport was resized — this must NOT return the stale
   // transform computed under the old dimensions.
-  const resized: FitInput = { ...input, dimensions: { width: 400, height: 300 } }
+  // Small enough that the fit is bound by the viewport, not the max auto-fit zoom
+  const resized: FitInput = { ...input, dimensions: { width: 160, height: 120 } }
   const after = computeFitTransform(resized, cache)
 
   assert.notEqual(after, null)
@@ -76,4 +77,16 @@ test('computeFitTransform leaves room for bottom chrome and recomputes when the 
   assert.ok(inset.y < plain.y, 'content is shifted up to clear the bottom bar')
   const noInset = computeFitTransform({ ...input, bottomInset: 0 }, cache)!
   assert.equal(noInset.y, plain.y)
+})
+
+test('computeFitTransform centers content in the band between top and bottom chrome', () => {
+  const cache = createFitCache()
+  const input = baseInput({ dimensions: { width: 844, height: 390 } })
+  const plain = computeFitTransform(input, cache)!
+  const banded = computeFitTransform({ ...input, topInset: 90, bottomInset: 70 }, cache)!
+  assert.ok(banded.scale <= plain.scale, 'a smaller band never zooms in further')
+  assert.ok(banded.y > computeFitTransform({ ...input, bottomInset: 70 }, createFitCache())!.y, 'top chrome pushes content down')
+  // Chrome taller than 75% of the screen: insets shrink proportionally, never a negative band
+  const squeezed = computeFitTransform({ ...input, topInset: 300, bottomInset: 300 }, cache)!
+  assert.ok(squeezed.scale > 0 && Number.isFinite(squeezed.y))
 })

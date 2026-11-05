@@ -8,6 +8,7 @@ import { useClickOutside } from '@/hooks/use-click-outside'
 import { useEscapeKey } from '@/hooks/use-escape-key'
 import { useVirtualList } from '@/hooks/use-virtual-list'
 import { useIsMobile } from '@/hooks/use-is-mobile'
+import { useTopChromeInset } from '@/hooks/use-top-chrome-inset'
 
 interface MessageFeedPanelProps {
   conversations: Map<string, ConversationMessage[]>
@@ -182,6 +183,9 @@ function MessageFeedPanelImpl({
   const collapsePanel = useCallback(() => setExpanded(false), [])
   useClickOutside(panelRef, collapsePanel)
   useEscapeKey(collapsePanel, expanded)
+  // Collapsed pill overlays the canvas top-left: keep fitted nodes below it
+  const pillRef = useRef<HTMLButtonElement>(null)
+  useTopChromeInset('feed-pill', pillRef, !expanded && !!latestMessage)
 
   if (!latestMessage && agentsWithMessages.length === 0) return null
 
@@ -197,6 +201,7 @@ function MessageFeedPanelImpl({
 
     return (
       <button
+        ref={pillRef}
         type="button"
         aria-expanded={false}
         aria-label={`Show messages. Latest from ${agentName}`}

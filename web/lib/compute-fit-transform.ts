@@ -3,6 +3,14 @@ import { BUBBLE_HOLD, BUBBLE_FADE_OUT, BUBBLE_MAX_W, TOOL_CARD_W, TOOL_CARD_H, D
 
 /** Extra padding added to agent node radii for auto-fit bounding box */
 const AUTOFIT_AGENT_PADDING = 22
+/** Screen px reserved under the lowest node for its name/context label stack. */
+const FIT_LABEL_ROOM = 32
+/** Auto-fit never zooms a sparse graph (e.g. a lone orchestrator) in past this. */
+const FIT_MAX_SCALE = 1.5
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v))
+}
 
 export interface Transform {
   x: number
@@ -19,6 +27,8 @@ export interface FitInput {
   simTime: number
   /** Pixels at the bottom of the viewport covered by chrome (e.g. control bar); fit centers above it */
   bottomInset?: number
+  /** Pixels at the top of the viewport covered by chrome (top bar, message pill); fit centers below it */
+  topInset?: number
 }
 
 export interface FitCache {
@@ -29,11 +39,12 @@ export interface FitCache {
   width: number
   height: number
   bottomInset: number
+  topInset: number
   result: Transform | null
 }
 
 export function createFitCache(): FitCache {
-  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, bottomInset: 0, result: null }
+  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, bottomInset: 0, topInset: 0, result: null }
 }
 
 /** Collect an agent and all its descendants (BFS) */
@@ -61,6 +72,7 @@ export function getDescendantIds(agents: Map<string, Agent>, rootId: string): Se
 export function computeFitTransform(input: FitInput, cache: FitCache): Transform | null {
   const { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime } = input
   const bottomInset = Math.max(0, input.bottomInset ?? 0)
+  const topInset = Math.max(0, input.topInset ?? 0)
   if (agents.size === 0) return null
 
   // Return cached result if inputs haven't changed (reference equality for
@@ -73,7 +85,8 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
     && cache.selectedAgentId === selectedAgentId
     && cache.width === dimensions.width
     && cache.height === dimensions.height
-    && cache.bottomInset === bottomInset) {
+    && cache.bottomInset === bottomInset
+    && cache.topInset === topInset) {
     return cache.result
   }
 
@@ -140,22 +153,39 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   cache.width = dimensions.width
   cache.height = dimensions.height
   cache.bottomInset = bottomInset
+  cache.topInset = topInset
 
   if (minX === Infinity) {
     cache.result = null
     return null
   }
-  const padding = ANIM.viewportPadding
-  const boundsW = maxX - minX + padding * 2
-  const boundsH = maxY - minY + padding * 2
+  const boundsW = Math.max(maxX - minX, 1)
+  const boundsH = Math.max(maxY - minY, 1)
   const centerX = (minX + maxX) / 2
   const centerY = (minY + maxY) / 2
-  // Fit within the area not covered by bottom chrome (never collapse below 25% of the height)
-  const availH = Math.max(dimensions.height - bottomInset, dimensions.height * 0.25)
-  const scale = Math.min(dimensions.width / boundsW, availH / boundsH, 2)
+  // Fit within the band not covered by top/bottom chrome. If the chrome would
+  // leave under 25% of the height, shrink both insets proportionally instead.
+  let top = topInset, bottom = bottomInset
+  const minH = dimensions.height * 0.25
+  if (dimensions.height - top - bottom < minH && top + bottom > 0) {
+    const k = (dimensions.height - minH) / (top + bottom)
+    top *= k
+    bottom *= k
+  }
+  const availH = dimensions.height - top - bottom
+  // Padding is in screen px, not world units: world padding would eat most of
+  // a short (landscape phone) viewport once zoomed out. Labels hang below
+  // nodes at a constant screen size, so the bottom pad is larger.
+  const padX = clamp(dimensions.width * 0.08, 24, ANIM.viewportPadding)
+  const padTop = clamp(availH * 0.05, 12, 48)
+  const padBottom = padTop + FIT_LABEL_ROOM
+  const innerW = Math.max(dimensions.width - padX * 2, dimensions.width * 0.5)
+  const innerH = Math.max(availH - padTop - padBottom, availH * 0.5)
+  const scale = Math.min(innerW / boundsW, innerH / boundsH, FIT_MAX_SCALE)
+  const bandTop = availH - padTop - padBottom >= availH * 0.5 ? top + padTop : top + (availH - innerH) / 2
   const result = {
     x: dimensions.width / 2 - centerX * scale,
-    y: availH / 2 - centerY * scale,
+    y: bandTop + innerH / 2 - centerY * scale,
     scale,
   }
   cache.result = result

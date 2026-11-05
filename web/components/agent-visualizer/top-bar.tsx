@@ -10,6 +10,7 @@ import type { SessionInfo, ConnectionStatus } from "@/lib/bridge-types"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { useClickOutside } from "@/hooks/use-click-outside"
 import { useEscapeKey } from "@/hooks/use-escape-key"
+import { useTopChromeInset } from "@/hooks/use-top-chrome-inset"
 
 // ─── Mute/Unmute SVG Icons ───────────────────────────────────────────────────
 
@@ -142,8 +143,11 @@ function DesktopTopBar({
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
+  const barRef = useRef<HTMLDivElement>(null)
+  useTopChromeInset('top-bar', barRef)
   return (
     <div
+      ref={barRef}
       className="absolute flex items-center gap-4 font-mono text-[10px] pointer-events-none"
       style={{ top: 'var(--af-top)', left: 'var(--af-left)', right: 'var(--af-right)', zIndex: Z.topBar }}
     >
@@ -218,9 +222,12 @@ function MobileTopBar({
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   useClickOutside(menuRef, closeMenu)
   useEscapeKey(closeMenu, menuOpen)
+  const barRef = useRef<HTMLDivElement>(null)
+  useTopChromeInset('top-bar', barRef)
 
   return (
     <div
+      ref={barRef}
       className="absolute flex items-center gap-2 font-mono text-[10px] pointer-events-none"
       style={{
         top: 'var(--af-top)',

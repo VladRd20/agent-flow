@@ -309,7 +309,7 @@ export function AgentCanvas({
       const h = dimensions.height
 
       // Camera physics (inertia + auto-fit)
-      updateCamera(isDragging, pauseAutoFit)
+      updateCamera(isDragging, pauseAutoFit, deltaTime)
 
       // Floaty agent drag
       updateDragLerp(agents, onAgentDrag)
