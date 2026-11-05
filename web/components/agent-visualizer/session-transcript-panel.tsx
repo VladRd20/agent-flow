@@ -148,7 +148,7 @@ function SessionTranscriptPanelImpl({
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-2"
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-2 [overflow-wrap:anywhere]"
           style={{ scrollbarWidth: 'thin', scrollbarColor: `${COLORS.scrollbarThumb} transparent` }}
         >
           {filteredConversation.length === 0 ? (

@@ -4,6 +4,7 @@ import { FONT, COST_RATE, MODEL_FAMILY_COST, COST_DRAW, COST_PANEL, MIN_VISIBLE_
 import { formatTokens } from '@/lib/utils'
 import { truncateText } from './draw-misc'
 import { getOverlayFrame } from './overlay-layout'
+import { getTopInset } from '@/lib/layout-insets'
 
 /** Blended $/M-token rate for a model ID — first matching family wins,
  *  unknown models fall back to the Sonnet-class rate. */
@@ -162,10 +163,15 @@ export function drawCostSummaryPanel(
   // the canvas-size derivation is only a fallback for callers without a frame.
   const frame = getOverlayFrame()
   const canvasW = frame ? frame.vw : (ctx.canvas.clientWidth || ctx.canvas.width)
-  const panelW = COST_PANEL.width
-  const panelX = canvasW - panelW - COST_PANEL.xMargin
-  const panelY = COST_PANEL.yStart
-  const lineH = COST_PANEL.lineHeight
+  // Phones: full-width card with larger type; it sits below whatever top chrome
+  // (tabs, message pill) is showing instead of at a fixed y underneath it.
+  const narrow = canvasW < COST_PANEL.width * 2.4
+  const margin = narrow ? 12 : COST_PANEL.xMargin
+  const panelW = narrow ? canvasW - margin * 2 : COST_PANEL.width
+  const panelX = canvasW - panelW - margin
+  const panelY = Math.max(COST_PANEL.yStart, getTopInset())
+  const fs = narrow ? 2 : 0
+  const lineH = COST_PANEL.lineHeight + (narrow ? 6 : 0)
   const headerH = COST_PANEL.headerHeight
   const sectionGap = COST_PANEL.sectionGap
   const agentRows = Math.min(agentBreakdown.length, COST_PANEL.maxRows)
@@ -186,13 +192,13 @@ export function drawCostSummaryPanel(
   let y = panelY + 8
 
   // Header: total cost
-  ctx.font = FONT.mono(12, 'bold')
+  ctx.font = FONT.mono(12 + fs, 'bold')
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
   ctx.fillStyle = COLORS.costText
   ctx.fillText(`$${totalCost.toFixed(3)}`, panelX + COST_PANEL.contentPadding, y)
 
-  ctx.font = FONT.mono(10)
+  ctx.font = FONT.mono(10 + fs)
   ctx.fillStyle = COLORS.textMuted
   ctx.fillText(`${formatTokens(totalTokens)} tokens`, panelX + COST_PANEL.contentPadding + ctx.measureText(`$${totalCost.toFixed(3)}`).width + 14, y + 2)
 
@@ -219,15 +225,18 @@ export function drawCostSummaryPanel(
     ctx.fill()
 
     // Agent name
-    ctx.font = FONT.mono(9)
+    ctx.font = FONT.mono(9 + fs)
     ctx.fillStyle = COLORS.textPrimary
     ctx.textAlign = 'left'
-    ctx.fillText(truncateText(ctx, a.name, barW - 50), panelX + COST_PANEL.contentPadding + COST_PANEL.barInset, y + 3)
+    ctx.textBaseline = 'middle'
+    const rowMid = y + 1 + (lineH - 3) / 2
+    ctx.fillText(truncateText(ctx, a.name, barW - 60), panelX + COST_PANEL.contentPadding + COST_PANEL.barInset, rowMid)
 
     // Cost
     ctx.textAlign = 'right'
     ctx.fillStyle = COLORS.costText
-    ctx.fillText(`$${a.cost.toFixed(3)}`, panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset, y + 3)
+    ctx.fillText(`$${a.cost.toFixed(3)}`, panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset, rowMid)
+    ctx.textBaseline = 'top'
 
     y += lineH
   }
@@ -236,11 +245,11 @@ export function drawCostSummaryPanel(
   if (toolList.length > 0) {
     y += sectionGap
 
-    ctx.font = FONT.mono(9)
+    ctx.font = FONT.mono(9 + fs)
     ctx.fillStyle = COLORS.textMuted
     ctx.textAlign = 'left'
     ctx.fillText('BY TOOL', panelX + COST_PANEL.contentPadding, y)
-    y += 14
+    y += 14 + fs
 
     for (let i = 0; i < toolRows; i++) {
       const t = toolList[i]
@@ -261,15 +270,18 @@ export function drawCostSummaryPanel(
       ctx.globalAlpha = 1
 
       // Tool name
-      ctx.font = FONT.mono(9)
+      ctx.font = FONT.mono(9 + fs)
       ctx.fillStyle = toolTypeColor(t.name)
       ctx.textAlign = 'left'
-      ctx.fillText(truncateText(ctx, t.name, barW - 50), panelX + COST_PANEL.contentPadding + COST_PANEL.barInset, y + 3)
+      ctx.textBaseline = 'middle'
+      const rowMid = y + 1 + (lineH - 3) / 2
+      ctx.fillText(truncateText(ctx, t.name, barW - 60), panelX + COST_PANEL.contentPadding + COST_PANEL.barInset, rowMid)
 
       // Cost
       ctx.textAlign = 'right'
       ctx.fillStyle = COLORS.costTextDim
-      ctx.fillText(`$${t.cost.toFixed(3)}`, panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset, y + 3)
+      ctx.fillText(`$${t.cost.toFixed(3)}`, panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset, rowMid)
+      ctx.textBaseline = 'top'
 
       y += lineH
     }
