@@ -72,7 +72,7 @@ function AgentChatPanelImpl({
         {/* Messages */}
         <div
           ref={logRef}
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1.5 mb-2"
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain space-y-1.5 mb-2 [overflow-wrap:anywhere]"
           style={{
             minHeight: isMobile ? 80 : CARD.chat.messagesMinHeight,
             maxHeight: isMobile ? undefined : CARD.chat.messagesMaxHeight,
