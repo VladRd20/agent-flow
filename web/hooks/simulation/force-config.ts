@@ -1,5 +1,6 @@
 import type { Agent, Edge } from '@/lib/agent-types'
 import { collideRadiusFor, suggestForceParams } from '@/components/agent-visualizer/canvas/layout-metrics'
+import { computeForceTargets, type ForceTarget } from './main-anchors'
 import { computeDegreeMap, getNodeSizeMultiplier } from '@/components/agent-visualizer/canvas/node-size'
 
 export interface ForceConfig {
@@ -8,6 +9,8 @@ export interface ForceConfig {
   /** Per-node collide radius (world px), keyed by agent id. */
   radii: Map<string, number>
   fallbackRadius: number
+  /** Per-node pull toward its session's cell; empty unless 2+ mains exist (All view). */
+  targets: Map<string, ForceTarget>
 }
 
 /**
@@ -33,5 +36,6 @@ export function buildForceConfig(agents: Map<string, Agent>, edges: Edge[]): For
     linkDistance: suggested.linkDistance,
     radii,
     fallbackRadius: suggested.collideRadius,
+    targets: computeForceTargets(agents.values()),
   }
 }

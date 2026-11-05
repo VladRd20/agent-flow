@@ -11,6 +11,7 @@ import type { Transform } from './use-canvas-camera'
 
 interface InteractionCallbacks {
   onAgentClick: (agentId: string | null) => void
+  onAgentOpen?: (agentId: string) => void
   onAgentHover: (agentId: string | null) => void
   onAgentDrag: (agentId: string, x: number, y: number) => void
   onContextMenu: (e: React.MouseEvent, type: 'agent' | 'edge' | 'canvas', id?: string) => void
@@ -202,9 +203,15 @@ export function useCanvasInteraction({
     return () => canvas.removeEventListener('wheel', handler)
   }, [mainCanvasRef])
 
-  const handleDoubleClick = useCallback(() => {
+  const handleDoubleClick = useCallback((e?: React.MouseEvent) => {
+    const open = drawPropsRef.current.onAgentOpen
+    if (open && e) {
+      const pos = screenToCanvas(e.clientX, e.clientY)
+      const agentId = findAgentAt(pos.x, pos.y)
+      if (agentId) { open(agentId); return }
+    }
     doZoomToFit()
-  }, [doZoomToFit])
+  }, [doZoomToFit, drawPropsRef, screenToCanvas, findAgentAt])
 
   // ─── Touch Handlers (mobile) ────────────────────────────────────────────
   // Native listeners (not React synthetic props) attached with passive:false,

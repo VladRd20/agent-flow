@@ -27,6 +27,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile"
 import { useAudioEffects } from "@/hooks/use-audio-effects"
 import type { ConversationMessage } from "@/hooks/simulation/types"
 import { buildGhostView } from "@/hooks/simulation/ghost-view"
+import { ALL_SESSIONS_ID } from "@/lib/all-sessions"
 
 const SHOW_FINISHED_KEY = "agent-flow:show-finished"
 
@@ -36,7 +37,7 @@ const EMPTY_CONVERSATION: ConversationMessage[] = []
 export function AgentVisualizer() {
   const bridge = useVSCodeBridge()
   // Stable callbacks pulled out so hook deps are exact (bridge itself is a new object each render)
-  const { getSessionEventCount, takeSwitchCursor, flushSessionEvents, removeSession, selectSession, bridgeOpenFile } = bridge
+  const { getSessionEventCount, takeSwitchCursor, flushSessionEvents, removeSession, selectSession, bridgeOpenFile, rebuildAll, allRebuildToken } = bridge
 
   const {
     frameRef,
@@ -60,6 +61,7 @@ export function AgentVisualizer() {
     updateAgentPosition,
     saveSnapshot,
     restoreSnapshot,
+    relabelMains,
   } = useAgentSimulation({
     useMockData: bridge.useMockData,
     externalEvents: bridge.pendingEvents,
@@ -138,7 +140,9 @@ export function AgentVisualizer() {
       // Review/scrub state is per-component, not per-session: the incoming tab is restored live
       setIsReviewing(false)
       // Save outgoing session state (if any)
-      if (prevSelectedRef.current !== null) {
+      // All is never cached: it is rebuilt from the per-session buffers on entry,
+      // and leaving it must not touch any session's snapshot or cursor.
+      if (prevSelectedRef.current !== null && prevSelectedRef.current !== ALL_SESSIONS_ID) {
         const outgoing = prevSelectedRef.current
         const snapshot = saveSnapshot()
         // Events in the buffer that were never folded are lost by restart()/
@@ -156,7 +160,7 @@ export function AgentVisualizer() {
       // Restore or cold-start the incoming session, then flush events.
       // Flushing happens HERE (after state swap) to prevent the animation
       // frame from processing events in the wrong simulation context.
-      const cached = sessionCacheRef.current.get(bridge.selectedSessionId)
+      const cached = bridge.selectedSessionId === ALL_SESSIONS_ID ? undefined : sessionCacheRef.current.get(bridge.selectedSessionId)
       if (cached) {
         restoreSnapshot(cached.snapshot)
         flushSessionEvents(bridge.selectedSessionId, cached.eventCount)
@@ -168,6 +172,22 @@ export function AgentVisualizer() {
       prevSelectedRef.current = bridge.selectedSessionId
     }
   }, [bridge.selectedSessionId, restart, flushSessionEvents, saveSnapshot, restoreSnapshot, getSessionEventCount, takeSwitchCursor])
+
+  // All view: closing a tab (or any other reason to rebuild) replays every buffer into a fresh simulation.
+  const prevRebuildTokenRef = useRef(allRebuildToken)
+  useLayoutEffect(() => {
+    if (prevRebuildTokenRef.current === allRebuildToken) return
+    prevRebuildTokenRef.current = allRebuildToken
+    if (bridge.selectedSessionId !== ALL_SESSIONS_ID) return
+    restart()
+    flushSessionEvents(ALL_SESSIONS_ID)
+  }, [allRebuildToken, bridge.selectedSessionId, restart, flushSessionEvents])
+
+  // All view: each session's main node shows the session's current tab label (follows renames).
+  useEffect(() => {
+    if (bridge.selectedSessionId !== ALL_SESSIONS_ID) return
+    relabelMains(new Map(bridge.sessions.map(s => [s.id, s.label])))
+  }, [bridge.selectedSessionId, bridge.sessions, relabelMains, liveAgents])
 
   // Timeline events — incremental: only processes new conversation messages
   const timelineCacheRef = useRef<{
@@ -301,7 +321,9 @@ export function AgentVisualizer() {
   const handleCloseSession = useCallback((id: string) => {
     removeSession(id)
     sessionCacheRef.current.delete(id)
-    if (bridge.selectedSessionId === id) {
+    if (bridge.selectedSessionId === ALL_SESSIONS_ID) {
+      rebuildAll()
+    } else if (bridge.selectedSessionId === id) {
       const remaining = bridge.sessions.filter(s => s.id !== id)
       if (remaining.length > 0) {
         selectSession(remaining[remaining.length - 1].id)
@@ -312,7 +334,14 @@ export function AgentVisualizer() {
     // every render, so depending on `bridge` itself recreated this callback
     // (and the TopBar prop it's passed to) on every render, defeating
     // TopBar's memo().
-  }, [removeSession, bridge.selectedSessionId, bridge.sessions, selectSession])
+  }, [removeSession, bridge.selectedSessionId, bridge.sessions, selectSession, rebuildAll])
+
+  // All view: jump from a node to its own session tab
+  const isAllView = bridge.selectedSessionId === ALL_SESSIONS_ID
+  const handleOpenAgentSession = useCallback((agentId: string) => {
+    const sid = liveAgents.get(agentId)?.sessionId
+    if (sid) selectSession(sid)
+  }, [liveAgents, selectSession])
 
   const openFile = useCallback((filePath: string, line?: number) => {
     bridgeOpenFile(filePath, line)
@@ -343,6 +372,7 @@ export function AgentVisualizer() {
         zoomToFitTrigger={zoomToFitTrigger}
         pauseAutoFit={selection.contextMenu !== null}
         onAgentClick={selection.handleAgentClick}
+        onAgentOpen={isAllView ? handleOpenAgentSession : undefined}
         onAgentHover={selection.setHoveredAgentId}
         onAgentDrag={updateAgentPosition}
         onContextMenu={selection.handleContextMenu}
@@ -368,6 +398,7 @@ export function AgentVisualizer() {
           <AgentDetailCard
             agent={selectedAgent}
             onClose={selection.clearAgent}
+            onOpenSession={isAllView && selectedAgent.sessionId ? () => handleOpenAgentSession(selectedAgent.id) : undefined}
           />
         </div>
       )}

@@ -9,6 +9,7 @@ import { withTimelineModel } from '@/lib/timeline-models'
 import { pushTimelineBlock, type ProcessEventContext, type MutableEventState } from './process-event'
 import { edgeId, asString, asBoolean } from './types'
 import { reviveHiddenAgent } from './hidden-agents'
+import { computeMainAnchors } from './main-anchors'
 
 export function handleAgentSpawn(
   payload: Record<string, unknown>,
@@ -17,6 +18,9 @@ export function handleAgentSpawn(
   ctx: ProcessEventContext,
 ): void {
   const name = asString(payload.name)
+  // All-sessions view: `name` is a namespaced key; displayName/sessionId carry the clean label and owner.
+  const displayName = asString(payload.displayName) || name
+  const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : undefined
   const parentId = typeof payload.parent === 'string' ? payload.parent : undefined
   const isMain = asBoolean(payload.isMain)
   // agentType ('orchestrator'|'subagent') is emitted alongside isMain as a
@@ -106,13 +110,23 @@ export function handleAgentSpawn(
       // near the orchestrator instead, if one exists, so it at least lands
       // somewhere sane once it fades in.
       for (const a of state.agents.values()) {
-        if (a.isMain) { x = a.x; y = a.y; break }
+        if (a.isMain && (!sessionId || a.sessionId === sessionId)) { x = a.x; y = a.y; break }
       }
+    }
+  } else if (isMain) {
+    // A second main (another session in the All view): start at its own grid
+    // cell instead of on top of the existing cluster(s).
+    const mains = Array.from(state.agents.values()).filter(a => a.isMain)
+    if (mains.length > 0) {
+      const anchors = computeMainAnchors([...state.agents.values(), { id: name, isMain: true, parentId: null, spawnTime: currentTime }])
+      const at = anchors.get(name)
+      if (at) { x = at.x; y = at.y }
     }
   }
 
   const agent: Agent = {
-    id: name, name, state: 'idle',
+    id: name, name: displayName, state: 'idle',
+    ...(sessionId ? { sessionId } : {}),
     parentId: parentId || null,
     tokensUsed: 0, tokensMax: ctx.getContextWindowSize(model),
     contextBreakdown: emptyContextBreakdown(),
@@ -138,7 +152,7 @@ export function handleAgentSpawn(
   const timelineEntry: TimelineEntry = {
     id: `timeline-${name}`,
     agentId: name,
-    agentName: name,
+    agentName: displayName,
     startTime: currentTime,
     blocks: [],
     ...(previousModels ? { models: previousModels } : {}),
