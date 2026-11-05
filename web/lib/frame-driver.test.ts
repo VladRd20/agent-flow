@@ -33,6 +33,33 @@ test('wake() from inside a tick keeps exactly one pending frame (bug: forked a s
   assert.equal(ticks, 10)
 })
 
+/** Drive one second of vsyncs at `hz` (optionally jittered) and count 'full' ticks. */
+function ticksPerSecond(hz: number, jitterMs = 0): number {
+  const d = new FrameDriver()
+  let ticks = 0
+  d.register({ name: 'anim', order: 0, tick: () => { ticks++; return 'full' } })
+  const period = 1000 / hz
+  for (let i = 1; i <= hz; i++) {
+    const ts = 1000 + i * period + (i % 2 ? jitterMs : -jitterMs)
+    const cbs = [...rafQueue.values()]
+    rafQueue.clear()
+    for (const cb of cbs) cb(ts)
+  }
+  return ticks
+}
+
+test('animating frames are capped at ~120fps on fast displays', () => {
+  for (const hz of [144, 165, 240]) {
+    const n = ticksPerSecond(hz)
+    assert.ok(n >= 115 && n <= 122, `${hz}Hz -> ${n} ticks/s`)
+  }
+})
+
+test('120Hz and 60Hz displays run at their full rate, even with timestamp jitter', () => {
+  assert.ok(ticksPerSecond(120, 0.4) >= 118, '120Hz')
+  assert.ok(ticksPerSecond(60, 0.4) >= 59, '60Hz')
+})
+
 test('a wake requested during an otherwise idle tick still schedules the next frame', () => {
   const d = new FrameDriver()
   let n = 0

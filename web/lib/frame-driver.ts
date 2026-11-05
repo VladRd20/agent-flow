@@ -6,7 +6,7 @@
  *   'slow' (subtle ambient animation: throttled to ~30fps) or 'idle'.
  *   When every task is idle the driver stops scheduling entirely (zero CPU)
  *   until something calls wake().
- * - Coarse-pointer devices (phones/tablets) are capped to 30fps.
+ * - 'full' is capped at 120fps on every device (desktop and touch alike).
  * - While the document is hidden rAF is not used at all; only tasks flagged
  *   runWhenHidden (the simulation, so queued events keep draining) tick on a
  *   low-rate timer.
@@ -28,18 +28,16 @@ export interface FrameTask {
   tick(timestamp: number, resumed: boolean): FrameMode
 }
 
-const FULL_INTERVAL_MS = 1000 / 60 - 1
+/** Animating cap: 120fps on every device (desktop and touch). */
+const FULL_INTERVAL_MS = 1000 / 120
 const THROTTLED_INTERVAL_MS = 1000 / 30
 const HIDDEN_INTERVAL_MS = 500
+/** rAF timestamps jitter; a frame this close to due still runs (keeps 120Hz at 120, not 60). */
+const INTERVAL_SLACK_MS = 1
 const RANK: Record<FrameMode, number> = { idle: 0, slow: 1, full: 2 }
 
 export const PERF_STATS_ENABLED = typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('perf') === '1'
-
-export function isCoarsePointer(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    && window.matchMedia('(pointer: coarse)').matches
-}
 
 export class FrameDriver {
   private tasks: FrameTask[] = []
@@ -48,7 +46,6 @@ export class FrameDriver {
   private lastRun = 0
   private mode: FrameMode = 'idle'
   private resumed = true
-  private coarse = false
   private listening = false
   /** True while run() is executing task ticks. */
   private running = false
@@ -97,16 +94,12 @@ export class FrameDriver {
   private ensureListeners(): void {
     if (this.listening || typeof document === 'undefined') return
     this.listening = true
-    this.coarse = isCoarsePointer()
     document.addEventListener('visibilitychange', () => {
       this.cancelPending()
       this.resumed = true
       this.mode = 'idle'
       this.wake()
     })
-    if (typeof window.matchMedia === 'function') {
-      window.matchMedia('(pointer: coarse)').addEventListener?.('change', (e) => { this.coarse = e.matches })
-    }
   }
 
   private cancelPending(): void {
@@ -128,15 +121,17 @@ export class FrameDriver {
   private run(ts: number): void {
     this.timer = 0
     const hidden = document.hidden
-    const interval = hidden ? 0
-      : (this.coarse || this.mode === 'slow') ? THROTTLED_INTERVAL_MS : FULL_INTERVAL_MS
-    if (!this.resumed && this.lastRun && ts - this.lastRun < interval - 2) {
+    const interval = hidden ? 0 : this.mode === 'slow' ? THROTTLED_INTERVAL_MS : FULL_INTERVAL_MS
+    if (!this.resumed && this.lastRun && ts - this.lastRun < interval - INTERVAL_SLACK_MS) {
       this.schedule()
       return
     }
     const resumed = this.resumed
     this.resumed = false
-    this.lastRun = ts
+    // Advance by whole intervals rather than snapping to ts, so a display faster than the
+    // cap (144/165/240Hz) averages out at the cap instead of halving to every other vsync.
+    // Re-anchor after a long gap (resume, slow mode, a dropped frame burst).
+    this.lastRun = (this.lastRun && !resumed && ts - this.lastRun < interval * 2) ? this.lastRun + interval : ts
 
     const t0 = PERF_STATS_ENABLED ? performance.now() : 0
     let best: FrameMode = 'idle'

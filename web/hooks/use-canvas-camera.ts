@@ -88,7 +88,7 @@ export function useCanvasCamera({
   const updateCamera = useCallback((isDragging: boolean, pauseAutoFit?: boolean, deltaTime = 1 / 60) => {
     const transform = transformRef.current
     // Inertia and easing constants are tuned per 60fps frame; scale them by the
-    // real frame time so 30fps (touch) and throttled frames feel the same.
+    // real frame time so 120fps, 60fps and throttled frames feel the same.
     const frames = Math.min(Math.max(deltaTime * 60, 0), 4)
 
     // Pan inertia

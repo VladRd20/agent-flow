@@ -119,8 +119,6 @@ export const ANIM_SPEED = {
   maxDeltaTime: 0.1,
   /** Default delta time when time info unavailable */
   defaultDeltaTime: 0.016,
-  /** Minimum ms between frames (60fps cap, with 1ms slack for timing jitter) */
-  minFrameInterval: (1000 / 60) - 1,
   /**
    * Tick interval (ms) used to drive the simulation loop while the tab is
    * backgrounded. Browsers throttle/suspend requestAnimationFrame for hidden

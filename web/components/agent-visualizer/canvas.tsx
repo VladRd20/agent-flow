@@ -518,7 +518,7 @@ export function AgentCanvas({
   drawRef.current = draw
 
   useEffect(() => {
-    // Shared driver owns rAF, the 30fps cap on touch devices, hidden-tab stop and idling.
+    // Shared driver owns rAF, the 120fps cap, hidden-tab stop and idling.
     return frameDriver.register({
       name: 'draw', order: 1,
       tick: (ts, resumed) => drawRef.current(ts, resumed),

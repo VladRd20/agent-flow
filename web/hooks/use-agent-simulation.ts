@@ -189,7 +189,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   // are processed, so React only re-renders UI on structural data changes.
   // Returns how busy the sim is so the shared frame driver can idle/throttle.
   const animate = useCallback((timestamp: number, resumed = false): FrameMode => {
-    // Frame pacing (60fps / 30fps coarse / hidden) is owned by the frame driver.
+    // Frame pacing (120fps cap / 30fps ambient / hidden) is owned by the frame driver.
     if (resumed) lastTimeRef.current = 0
     if (!lastTimeRef.current) lastTimeRef.current = timestamp
     const deltaTime = Math.min((timestamp - lastTimeRef.current) / 1000, ANIM_SPEED.maxDeltaTime)
@@ -360,7 +360,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   animateRef.current = animate
 
   // Register with the shared frame driver while playing. The driver owns rAF,
-  // the 30fps coarse-pointer cap, hidden-tab timer ticks (runWhenHidden keeps
+  // the 120fps cap, hidden-tab timer ticks (runWhenHidden keeps
   // event draining without rAF) and idling when nothing is animating.
   useEffect(() => {
     if (!state.isPlaying) return
