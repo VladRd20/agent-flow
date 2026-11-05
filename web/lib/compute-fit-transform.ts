@@ -29,6 +29,8 @@ export interface FitInput {
   bottomInset?: number
   /** Pixels at the top of the viewport covered by chrome (top bar, message pill); fit centers below it */
   topInset?: number
+  /** Pixels at the right of the viewport covered by chrome (wide-layout cost card); fit centers left of it */
+  rightInset?: number
 }
 
 export interface FitCache {
@@ -40,11 +42,12 @@ export interface FitCache {
   height: number
   bottomInset: number
   topInset: number
+  rightInset: number
   result: Transform | null
 }
 
 export function createFitCache(): FitCache {
-  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, bottomInset: 0, topInset: 0, result: null }
+  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, bottomInset: 0, topInset: 0, rightInset: 0, result: null }
 }
 
 /** Collect an agent and all its descendants (BFS) */
@@ -73,6 +76,7 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime } = input
   const bottomInset = Math.max(0, input.bottomInset ?? 0)
   const topInset = Math.max(0, input.topInset ?? 0)
+  const rightInset = Math.max(0, input.rightInset ?? 0)
   // Collapsed/hidden container (ResizeObserver can report 0 transiently): no fit
   if (agents.size === 0 || !(dimensions.width > 0) || !(dimensions.height > 0)) return null
 
@@ -87,7 +91,8 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
     && cache.width === dimensions.width
     && cache.height === dimensions.height
     && cache.bottomInset === bottomInset
-    && cache.topInset === topInset) {
+    && cache.topInset === topInset
+    && cache.rightInset === rightInset) {
     return cache.result
   }
 
@@ -155,6 +160,7 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   cache.height = dimensions.height
   cache.bottomInset = bottomInset
   cache.topInset = topInset
+  cache.rightInset = rightInset
 
   if (minX === Infinity) {
     cache.result = null
@@ -180,12 +186,15 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const padX = clamp(dimensions.width * 0.08, 24, ANIM.viewportPadding)
   const padTop = clamp(availH * 0.05, 12, 48)
   const padBottom = padTop + FIT_LABEL_ROOM
-  const innerW = Math.max(dimensions.width - padX * 2, dimensions.width * 0.5)
+  // Reserve the right-hand overlay, but never more than 40% of the width.
+  const right = Math.min(rightInset, dimensions.width * 0.4)
+  const availW = dimensions.width - right
+  const innerW = Math.max(availW - padX * 2, availW * 0.5)
   const innerH = Math.max(availH - padTop - padBottom, availH * 0.5)
   const scale = Math.min(innerW / boundsW, innerH / boundsH, FIT_MAX_SCALE)
   const bandTop = availH - padTop - padBottom >= availH * 0.5 ? top + padTop : top + (availH - innerH) / 2
   const result = {
-    x: dimensions.width / 2 - centerX * scale,
+    x: availW / 2 - centerX * scale,
     y: bandTop + innerH / 2 - centerY * scale,
     scale,
   }

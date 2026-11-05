@@ -4,7 +4,7 @@ import { FONT, COST_RATE, MODEL_FAMILY_COST, COST_DRAW, COST_PANEL, MIN_VISIBLE_
 import { formatTokens } from '@/lib/utils'
 import { truncateText } from './draw-misc'
 import { getOverlayFrame } from './overlay-layout'
-import { getTopInset } from '@/lib/layout-insets'
+import { getTopInset, setTopInset, setRightInset } from '@/lib/layout-insets'
 
 /** Blended $/M-token rate for a model ID — first matching family wins,
  *  unknown models fall back to the Sonnet-class rate. */
@@ -127,13 +127,28 @@ export function drawCostLabels(
   }
 }
 
+const COST_CARD_KEY = 'cost-card'
+const COST_CARD_GAP = 8
+
+/** Tell fit-to-view what the card covers: a top band on phones, a right column on wide layouts. */
+function publishCostCardInset(narrow: boolean, bottom: number, rightWidth: number): void {
+  setTopInset(COST_CARD_KEY, narrow ? bottom + COST_CARD_GAP : 0)
+  setRightInset(COST_CARD_KEY, narrow ? 0 : rightWidth + COST_CARD_GAP)
+}
+
+/** Withdraw the card's insets (card hidden or nothing to show). */
+export function clearCostCardInset(): void {
+  setTopInset(COST_CARD_KEY, 0)
+  setRightInset(COST_CARD_KEY, 0)
+}
+
 export function drawCostSummaryPanel(
   ctx: CanvasRenderingContext2D,
   agents: Map<string, Agent>,
   toolCalls: Map<string, ToolCallNode>,
 ) {
   const agentList = Array.from(agents.values()).filter(a => a.tokensUsed > 0)
-  if (agentList.length === 0) return
+  if (agentList.length === 0) { clearCostCardInset(); return }
 
   // Compute totals
   const totalTokens = agentList.reduce((s, a) => s + a.tokensUsed, 0)
@@ -169,7 +184,7 @@ export function drawCostSummaryPanel(
   const margin = narrow ? 12 : COST_PANEL.xMargin
   const panelW = narrow ? canvasW - margin * 2 : COST_PANEL.width
   const panelX = canvasW - panelW - margin
-  const panelY = Math.max(COST_PANEL.yStart, getTopInset())
+  const panelY = Math.max(COST_PANEL.yStart, getTopInset(COST_CARD_KEY))
   const fs = narrow ? 2 : 0
   const lineH = COST_PANEL.lineHeight + (narrow ? 6 : 0)
   const headerH = COST_PANEL.headerHeight
@@ -177,6 +192,8 @@ export function drawCostSummaryPanel(
   const agentRows = Math.min(agentBreakdown.length, COST_PANEL.maxRows)
   const toolRows = Math.min(toolList.length, COST_PANEL.maxRows)
   const panelH = headerH + (agentRows * lineH) + sectionGap + (toolRows > 0 ? 14 + toolRows * lineH : 0) + 12
+
+  publishCostCardInset(narrow, panelY + panelH, panelW + margin)
 
   ctx.save()
 

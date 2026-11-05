@@ -90,3 +90,24 @@ test('computeFitTransform centers content in the band between top and bottom chr
   const squeezed = computeFitTransform({ ...input, topInset: 300, bottomInset: 300 }, cache)!
   assert.ok(squeezed.scale > 0 && Number.isFinite(squeezed.y))
 })
+
+test('computeFitTransform keeps content left of a right-hand overlay (wide cost card) and recomputes when it changes', () => {
+  const cache = createFitCache()
+  const input = baseInput({ dimensions: { width: 1000, height: 600 } })
+  const plain = computeFitTransform(input, cache)!
+  const inset = computeFitTransform({ ...input, rightInset: 240 }, cache)!
+  assert.ok(inset.x < plain.x, 'content shifts left')
+  assert.ok(inset.scale <= plain.scale)
+  // The viewport center of the fitted band sits at (width - rightInset) / 2
+  const bounds = computeFitTransform({ ...input, rightInset: 240 }, createFitCache())!
+  assert.equal(bounds.x, inset.x)
+  const back = computeFitTransform({ ...input, rightInset: 0 }, cache)!
+  assert.equal(back.x, plain.x)
+})
+
+test('computeFitTransform caps the right inset at 40% of the width', () => {
+  const input = baseInput({ dimensions: { width: 500, height: 600 } })
+  const capped = computeFitTransform({ ...input, rightInset: 400 }, createFitCache())!
+  const atCap = computeFitTransform({ ...input, rightInset: 200 }, createFitCache())!
+  assert.deepEqual(capped, atCap)
+})
