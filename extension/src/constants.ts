@@ -241,6 +241,12 @@ export const SYSTEM_CONTENT_PREFIXES = [
   '<command-name',
   '<system_instruction',
   '<task-notification',
+  // Harness-injected messages from other sessions / background agents. After a
+  // relay restart these could be the first "user" message seen and rename the
+  // orchestrator node to "Another Claude session…".
+  'Another Claude session sent a message',
+  '<agent-message',
+  '[SYSTEM NOTIFICATION',
   '<local-command-stdout',
   '<local-command-caveat',
 ] as const

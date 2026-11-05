@@ -159,6 +159,13 @@ describe('background subagents (#92)', () => {
     assert.equal(ofType(events, 'message').length, 0)
   })
 
+  it('does not surface harness-injected agent messages as user prompts', () => {
+    const { events, feed } = setup()
+    feed({ type: 'user', uuid: 'u-agentmsg', message: { role: 'user', content: 'Another Claude session sent a message:\n<agent-message from="a1">\ndone\n</agent-message>' } })
+    feed({ type: 'user', uuid: 'u-sysnote', message: { role: 'user', content: '[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>\n</task-notification>' } })
+    assert.equal(ofType(events, 'message').length, 0)
+  })
+
   it('ignores notifications for other background tasks and repeats', () => {
     const { events, feed } = setup()
     feed(agentToolUse('toolu_1', 'Find callers'))
