@@ -8,6 +8,32 @@ const FIT_LABEL_ROOM = 32
 /** Auto-fit never zooms a sparse graph (e.g. a lone orchestrator) in past this. */
 const FIT_MAX_SCALE = 1.5
 
+/** Screen px a main's label plate needs on each axis before neighbouring plates stop overlapping. */
+const LABEL_CLEAR_X = 170
+const LABEL_CLEAR_Y = 105
+
+/**
+ * Smallest zoom at which every pair of session mains keeps clear label plates
+ * (labels are a fixed screen size, so squeezing many clusters in just stacks
+ * them on top of each other). Two mains are clear when separated by enough
+ * screen px horizontally OR vertically. 0 unless 2+ mains carry a sessionId
+ * (the All view), so single-session fitting is untouched.
+ */
+export function minLabelClearScale(agents: Iterable<Pick<Agent, 'isMain' | 'sessionId' | 'x' | 'y'>>): number {
+  const mains: { x: number; y: number }[] = []
+  for (const a of agents) if (a.isMain && a.sessionId) mains.push(a)
+  let need = 0
+  for (let i = 0; i < mains.length; i++) {
+    for (let j = i + 1; j < mains.length; j++) {
+      const dx = Math.abs(mains[i].x - mains[j].x)
+      const dy = Math.abs(mains[i].y - mains[j].y)
+      const pair = Math.min(dx > 0 ? LABEL_CLEAR_X / dx : Infinity, dy > 0 ? LABEL_CLEAR_Y / dy : Infinity)
+      if (Number.isFinite(pair)) need = Math.max(need, pair)
+    }
+  }
+  return need
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
@@ -191,11 +217,16 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const availW = dimensions.width - right
   const innerW = Math.max(availW - padX * 2, availW * 0.5)
   const innerH = Math.max(availH - padTop - padBottom, availH * 0.5)
-  const scale = Math.min(innerW / boundsW, innerH / boundsH, FIT_MAX_SCALE)
+  const natural = Math.min(innerW / boundsW, innerH / boundsH, FIT_MAX_SCALE)
+  // All view: don't zoom out past the point where cluster labels collide. If that
+  // clamps the zoom the graph no longer fits, so frame the top clusters (the user pans down).
+  const minScale = focusScope ? 0 : Math.min(minLabelClearScale(agents.values()), FIT_MAX_SCALE)
+  const clamped = minScale > natural
+  const scale = clamped ? minScale : natural
   const bandTop = availH - padTop - padBottom >= availH * 0.5 ? top + padTop : top + (availH - innerH) / 2
   const result = {
     x: availW / 2 - centerX * scale,
-    y: bandTop + innerH / 2 - centerY * scale,
+    y: clamped ? top + padTop - minY * scale : bandTop + innerH / 2 - centerY * scale,
     scale,
   }
   cache.result = result

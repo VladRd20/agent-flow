@@ -292,7 +292,10 @@ input, textarea {
 
 /* Touch: extend hit areas to 44x44 without changing the visual size. */
 @media (pointer: coarse) {
-  .af-hit {
+  /* Tailwind's `absolute` must win: a floating pill that was made `relative` here dropped
+     out of the overlay into normal flow, below the viewport (and its stale measurement
+     inset the whole fit-to-view band). */
+  .af-hit:not(.absolute):not(.fixed) {
     position: relative;
   }
   .af-hit::after {
