@@ -7,6 +7,8 @@ import { wakeFrames } from './frame-driver'
 let bottomInsetPx = 0
 const topInsets = new Map<string, number>()
 let topInsetPx = 0
+const rightInsets = new Map<string, number>()
+let rightInsetPx = 0
 
 /** Pixels at the bottom of the viewport covered by chrome (control bar). */
 export function setBottomInset(px: number): void {
@@ -36,6 +38,29 @@ export function setTopInset(key: string, px: number): void {
   wakeFrames()
 }
 
-export function getTopInset(): number {
-  return topInsetPx
+/** Top inset; `excludeKey` omits one publisher (so an overlay can position itself below the others). */
+export function getTopInset(excludeKey?: string): number {
+  if (excludeKey === undefined || !topInsets.has(excludeKey)) return topInsetPx
+  let max = 0
+  for (const [k, n] of topInsets) if (k !== excludeKey && n > max) max = n
+  return max
+}
+
+/**
+ * Pixels at the right of the viewport covered by chrome (wide-layout cost
+ * card). Keyed like top insets; the inset is the widest among publishers.
+ */
+export function setRightInset(key: string, px: number): void {
+  const v = Math.max(0, Math.round(px))
+  if (v > 0) rightInsets.set(key, v)
+  else rightInsets.delete(key)
+  let max = 0
+  for (const n of rightInsets.values()) if (n > max) max = n
+  if (max === rightInsetPx) return
+  rightInsetPx = max
+  wakeFrames()
+}
+
+export function getRightInset(): number {
+  return rightInsetPx
 }

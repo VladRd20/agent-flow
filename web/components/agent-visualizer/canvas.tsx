@@ -17,7 +17,7 @@ import {
   drawParticles, buildEdgeMap,
   drawToolCalls,
   drawDiscoveries, drawDiscoveryConnections,
-  drawCostLabels, drawCostSummaryPanel,
+  drawCostLabels, drawCostSummaryPanel, clearCostCardInset,
   detectStateChanges as detectStateChangesPure,
   computeFocusSet,
   computeDegreeMap,
@@ -465,6 +465,7 @@ export function AgentCanvas({
       ctx.restore()
 
       if (showCostOverlay) drawCostSummaryPanel(ctx, agents, toolCalls)
+      else clearCostCardInset()
       if (bloomRef.current) bloomRef.current.apply(canvas, ctx)
       if (PERF_STATS_ENABLED) frameDriver.recordTaskMs('draw', performance.now() - drawT0)
 
