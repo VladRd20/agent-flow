@@ -5,7 +5,7 @@ export type AnchorAgent = Pick<Agent, 'id' | 'isMain' | 'parentId' | 'spawnTime'
 export interface Point { x: number; y: number }
 
 /** Smallest centre-to-centre distance between neighbouring session clusters (world px). */
-const MIN_CELL = 1300
+const MIN_CELL = 1000
 
 /** Root (main) id of every agent, following parentId links. */
 export function rootOf(agents: Iterable<AnchorAgent>): Map<string, string> {
@@ -59,7 +59,7 @@ export function computeMainAnchors(agents: Iterable<AnchorAgent>, aspect: number
   for (const r of roots.values()) sizes.set(r, (sizes.get(r) ?? 0) + 1)
   let biggest = 1
   for (const m of mains) biggest = Math.max(biggest, sizes.get(m.id) ?? 1)
-  const cellH = MIN_CELL + 220 * Math.sqrt(biggest)
+  const cellH = MIN_CELL + 160 * Math.sqrt(biggest)
   const cellW = cellH + BUBBLE_GUTTER
 
   const n = mains.length

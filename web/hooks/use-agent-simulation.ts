@@ -65,6 +65,31 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   const lastUIUpdateRef = useRef(0)
   const lastUITimeRef = useRef(0)
 
+  /**
+   * Copy force-node positions into frameRef (no React render). d3's manual
+   * `sim.tick()` never dispatches its 'tick' event, so this is called after
+   * every manual tick. Only done in the All view (2+ mains): there the spawn
+   * positions alone cannot keep growing session clusters apart. Single-session
+   * layout deliberately keeps using spawn positions, as before.
+   */
+  const applyForcePositions = useCallback((sim: Simulation<ForceNode, ForceLink>) => {
+    const prev = frameRef.current
+    let mains = 0
+    for (const a of prev.agents.values()) if (a.isMain && ++mains > 1) break
+    if (mains < 2) return
+    let newAgents: Map<string, Agent> | null = null
+    for (const node of sim.nodes()) {
+      const agent = (newAgents ?? prev.agents).get(node.id)
+      if (agent && !agent.pinned && node.x !== undefined && node.y !== undefined) {
+        if (Math.abs(agent.x - node.x) > 0.1 || Math.abs(agent.y - node.y) > 0.1) {
+          if (!newAgents) newAgents = new Map(prev.agents)
+          newAgents.set(node.id, { ...agent, x: node.x, y: node.y })
+        }
+      }
+    }
+    if (newAgents) frameRef.current = { ...prev, agents: newAgents }
+  }, [])
+
   // ─── d3-force simulation ─────────────────────────────────────────────────
   useEffect(() => {
     const sim = forceSimulation<ForceNode, ForceLink>([])
@@ -76,21 +101,6 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       .force('link', forceLink<ForceNode, ForceLink>([]).id(d => d.id).distance(FORCE.linkDistance).strength(FORCE.linkStrength))
       .alphaDecay(FORCE.alphaDecay)
       .velocityDecay(FORCE.velocityDecay)
-      .on('tick', () => {
-        // Force tick only updates positions — write to frameRef, no React render
-        const prev = frameRef.current
-        let newAgents: Map<string, Agent> | null = null
-        for (const node of sim.nodes()) {
-          const agent = (newAgents ?? prev.agents).get(node.id)
-          if (agent && !agent.pinned && node.x !== undefined && node.y !== undefined) {
-            if (Math.abs(agent.x - node.x) > 0.1 || Math.abs(agent.y - node.y) > 0.1) {
-              if (!newAgents) newAgents = new Map(prev.agents)
-              newAgents.set(node.id, { ...agent, x: node.x, y: node.y })
-            }
-          }
-        }
-        if (newAgents) frameRef.current = { ...prev, agents: newAgents }
-      })
 
     sim.stop()
     forceSimRef.current = sim
@@ -126,8 +136,9 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     sim.alpha(0.3).restart()
     for (let i = 0; i < 15; i++) sim.tick()
     sim.stop()
+    applyForcePositions(sim)
     wakeFrames()
-  }, [])
+  }, [applyForcePositions])
 
   // Viewport aspect bucket changed: re-pick the All-view grid shape (no-op for one session)
   useEffect(() => onViewAspectChange(() => {
@@ -339,7 +350,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // layout has cooled; syncForceSimulation/drag re-heat it.
     const fsim = forceSimRef.current
     const simHot = !!fsim && fsim.alpha() >= fsim.alphaMin()
-    if (simHot) fsim!.tick()
+    if (simHot) { fsim!.tick(); applyForcePositions(fsim!) }
 
     // Throttle React re-renders — UI updates at most ~4/sec, canvas stays smooth via frameRef
     if (shouldCommitFrame({
@@ -375,7 +386,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     lastUITimeRef.current = result.currentTime
     return 'idle'
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionFilter intentionally omitted; we read sessionFilterRef.current
-  }, [processEventWithContext, useMockData, externalEvents, onExternalEventsConsumed])
+  }, [processEventWithContext, useMockData, externalEvents, onExternalEventsConsumed, applyForcePositions])
 
   animateRef.current = animate
 
