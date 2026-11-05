@@ -110,6 +110,18 @@ function xmlTag(text: string, tag: string): string | undefined {
   return match[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').trim()
 }
 
+/**
+ * A `<task-notification>` delivered while the main agent was mid-turn is
+ * recorded as an attachment entry (`{type:'attachment', attachment:{type:
+ * 'queued_command', prompt}}`) rather than a user message. Returns its text.
+ */
+function queuedCommandText(parsed: Record<string, unknown>): string | undefined {
+  if (parsed.type !== 'attachment') return undefined
+  const att = parsed.attachment
+  if (!isRecord(att) || att.type !== 'queued_command') return undefined
+  return typeof att.prompt === 'string' ? att.prompt.trim() : undefined
+}
+
 /** Parse a `<task-notification>` block (sent when a background task stops). */
 export function parseTaskNotification(text: string): { toolUseId: string; status: string; summary: string } | null {
   if (!text.startsWith(TASK_NOTIFICATION_PREFIX)) return null
@@ -185,6 +197,14 @@ export class TranscriptParser {
         resetContextForCompaction(compactSession, agentName)
         this.delegate.emitContextUpdate(agentName, compactSession, sessionId)
       }
+      return
+    }
+
+    // Mid-turn background-task notification (queued_command attachment)
+    const queued = queuedCommandText(parsed)
+    if (queued !== undefined) {
+      const notification = parseTaskNotification(queued)
+      if (notification) { this.handleTaskNotification(notification, sessionId) }
       return
     }
 
@@ -623,8 +643,9 @@ export class TranscriptParser {
           const entry = JSON.parse(line.trim()) as TranscriptEntry & { toolUseResult?: unknown }
           // Track background subagents still running at attach time, so the
           // <task-notification> that arrives later can complete them.
-          if (entry.type === 'user' && entry.message) {
-            const notification = parseTaskNotification(userContentText(entry.message.content))
+          const queuedText = queuedCommandText(entry as unknown as Record<string, unknown>)
+          if ((entry.type === 'user' && entry.message) || queuedText !== undefined) {
+            const notification = parseTaskNotification(queuedText ?? userContentText(entry.message.content))
             if (notification) {
               this.backgroundSubagents.delete(notification.toolUseId)
               // The background agent finished within the scanned history: it is

@@ -102,6 +102,14 @@ function taskNotification(toolUseId: string, status = 'completed', result = 'Fou
   }
 }
 
+/** Same notification as delivered mid-turn: an attachment entry, not a user message. */
+function queuedNotification(toolUseId: string) {
+  return {
+    type: 'attachment', uuid: `q-${toolUseId}`,
+    attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: taskNotification(toolUseId).message.content },
+  }
+}
+
 const ofType = (events: AgentEvent[], type: string) => events.filter(e => e.type === type)
 
 describe('background subagents (#92)', () => {
@@ -139,6 +147,16 @@ describe('background subagents (#92)', () => {
 
     assert.equal(ofType(events, 'subagent_return')[0].payload.summary, '[failed] Ran out of turns')
     assert.equal(ofType(events, 'agent_complete').length, 1)
+  })
+
+  it('completes it from a mid-turn notification recorded as a queued_command attachment', () => {
+    const { events, feed } = setup()
+    feed(agentToolUse('toolu_1', 'Find callers'))
+    feed(agentToolResult('toolu_1', asyncLaunch()))
+    feed(queuedNotification('toolu_1'))
+
+    assert.deepEqual(ofType(events, 'agent_complete').map(e => e.payload), [{ name: 'Find callers' }])
+    assert.equal(ofType(events, 'message').length, 0)
   })
 
   it('ignores notifications for other background tasks and repeats', () => {
@@ -193,6 +211,16 @@ describe('prescan of background subagents', () => {
     parser.prescanExistingContent(file, Buffer.byteLength(history), session)
     return { session, events, parser, feed }
   }
+
+  it('treats a background agent finished via a queued_command notification as done (bug: stayed idle forever after restart)', () => {
+    const { session } = prescan([
+      agentToolUse('toolu_done', 'Already done'),
+      agentToolResult('toolu_done', asyncLaunch()),
+      queuedNotification('toolu_done'),
+    ])
+    assert.deepEqual(session.pendingCatchUpSpawns, [])
+    assert.ok(session.spawnedSubagents.has('Already done'))
+  })
 
   it('queues a spawn for a background agent that is still running after restart', () => {
     const { session, parser, events, feed } = prescan([
