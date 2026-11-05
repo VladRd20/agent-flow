@@ -45,6 +45,8 @@ export interface Agent {
   scale: number
   /** Queued text bubbles shown on canvas — newest pushed to end */
   messageBubbles: MessageBubble[]
+  /** View-only: a finished agent shown dimmed by "Show finished" (never set in simulation state) */
+  ghost?: boolean
 }
 
 export interface MessageBubble {

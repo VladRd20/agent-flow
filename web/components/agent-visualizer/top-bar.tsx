@@ -115,6 +115,10 @@ export interface TopBarProps {
   connectionStatus: ConnectionStatus
   // Stats
   agentCount: number
+  /** Hidden (finished, not yet expired) agents available as ghosts */
+  finishedCount: number
+  showFinished: boolean
+  onToggleFinished: () => void
   totalTokens: number
   // Panel toggles
   showFileAttention: boolean
@@ -139,7 +143,7 @@ function DesktopTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
   connectionStatus,
-  agentCount, totalTokens,
+  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
@@ -170,7 +174,10 @@ function DesktopTopBar({
       {/* Right-side info/controls */}
       <div className="flex items-center gap-4 flex-shrink-0 pointer-events-auto" style={{ color: COLORS.textMuted }}>
         <ConnectionIndicator status={connectionStatus} />
-        <span>{agentCount} agents</span>
+        <span>
+          {agentCount} agents
+          {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
+        </span>
         <span>
           {formatTokens(totalTokens)} tokens
           <span style={{ color: COLORS.complete + '65', marginLeft: 4 }}>
@@ -197,6 +204,7 @@ function DesktopTopBar({
 
         {/* Independent toggles */}
         <ToggleButton active={showTimeline} onClick={onToggleTimeline}>Timeline</ToggleButton>
+        <ToggleButton active={showFinished} onClick={onToggleFinished} label="Show finished agents">Finished</ToggleButton>
         <ToggleButton active={!isMuted} onClick={onToggleMute} label={isMuted ? 'Unmute' : 'Mute'} style={{ border: `1px solid ${COLORS.toggleBorder}` }}>
           {isMuted ? <MutedIcon /> : <UnmutedIcon />}
         </ToggleButton>
@@ -213,7 +221,7 @@ function MobileTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
   connectionStatus,
-  agentCount, totalTokens,
+  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
@@ -289,7 +297,10 @@ function MobileTopBar({
           >
             <div className="flex items-center justify-between px-1 py-1" style={{ color: COLORS.textMuted }}>
               <ConnectionIndicator status={connectionStatus} />
-              <span>{agentCount} agents</span>
+              <span>
+                {agentCount} agents
+                {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
+              </span>
             </div>
             <div className="px-1 pb-1" style={{ color: COLORS.textMuted }}>
               {formatTokens(totalTokens)} tokens
@@ -307,6 +318,7 @@ function MobileTopBar({
               activeColor={{ bg: COLORS.costActiveBg, text: COLORS.complete }}
             />
             <MobileMenuToggle label="Timeline" active={showTimeline} onClick={() => { onToggleTimeline(); closeMenu() }} />
+            <MobileMenuToggle label="Show finished" active={showFinished} onClick={() => { onToggleFinished(); closeMenu() }} />
             <MobileMenuToggle label={isMuted ? 'Unmute' : 'Mute'} active={!isMuted} onClick={() => { onToggleMute(); closeMenu() }} />
           </div>
         )}

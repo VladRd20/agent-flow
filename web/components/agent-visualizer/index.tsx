@@ -26,6 +26,9 @@ import { TopBar } from "./top-bar"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { useAudioEffects } from "@/hooks/use-audio-effects"
 import type { ConversationMessage } from "@/hooks/simulation/types"
+import { buildGhostView } from "@/hooks/simulation/ghost-view"
+
+const SHOW_FINISHED_KEY = "agent-flow:show-finished"
 
 /** Shared empty list so a hidden transcript panel keeps a stable prop. */
 const EMPTY_CONVERSATION: ConversationMessage[] = []
@@ -37,7 +40,9 @@ export function AgentVisualizer() {
 
   const {
     frameRef,
-    agents,
+    agents: liveAgents,
+    hiddenAgents,
+    edges: liveEdges,
     toolCalls,
     discoveries,
     fileAttention,
@@ -66,6 +71,29 @@ export function AgentVisualizer() {
     disable1MContext: bridge.disable1MContext,
   })
 
+  // "Show finished": finished (hidden, not yet expired) agents drawn as dimmed ghosts.
+  // Purely a derived view for selection / detail card / chat; simulation state is untouched.
+  const [showFinished, setShowFinished] = useState(false)
+  useEffect(() => {
+    try { if (localStorage.getItem(SHOW_FINISHED_KEY) === "on") setShowFinished(true) } catch { /* localStorage unavailable */ }
+  }, [])
+  const toggleShowFinished = useCallback(() => {
+    setShowFinished(prev => {
+      const next = !prev
+      try { localStorage.setItem(SHOW_FINISHED_KEY, next ? "on" : "off") } catch { /* ignore */ }
+      return next
+    })
+  }, [])
+  const agents = useMemo(
+    () => (showFinished ? buildGhostView(liveAgents, liveEdges, hiddenAgents).agents : liveAgents),
+    [showFinished, liveAgents, liveEdges, hiddenAgents],
+  )
+  const finishedCount = useMemo(() => {
+    let n = 0
+    for (const id of hiddenAgents.keys()) if (!liveAgents.has(id)) n++
+    return n
+  }, [hiddenAgents, liveAgents])
+
   const selection = useSelectionState({ agents, toolCalls, discoveries })
   const { clearAllSelections, clearAgent, selectedAgentId: selectedAgentIdSel } = selection
 
@@ -85,7 +113,7 @@ export function AgentVisualizer() {
   const [zoomToFitTrigger, setZoomToFitTrigger] = useState(0)
 
   const [isReviewing, setIsReviewing] = useState(false)
-  const { isMuted, seekingRef, handleToggleMute } = useAudioEffects(agents, toolCalls, isReviewing)
+  const { isMuted, seekingRef, handleToggleMute } = useAudioEffects(liveAgents, toolCalls, isReviewing)
 
   // Auto-play on mount
   useEffect(() => {
@@ -225,9 +253,9 @@ export function AgentVisualizer() {
 
   const totalTokens = useMemo(() => {
     let sum = 0
-    for (const a of agents.values()) sum += a.tokensUsed
+    for (const a of liveAgents.values()) sum += a.tokensUsed
     return sum
-  }, [agents])
+  }, [liveAgents])
 
   const selectedAgent = selection.selectedAgentId ? agents.get(selection.selectedAgentId) : null
   // On phones, sheets (files / transcript / timeline / agent detail+chat) take over the bottom,
@@ -290,7 +318,7 @@ export function AgentVisualizer() {
     bridgeOpenFile(filePath, line)
   }, [bridgeOpenFile])
 
-  const isEmpty = agents.size === 0 && !bridge.useMockData
+  const isEmpty = liveAgents.size === 0 && !bridge.useMockData
 
   return (
     <OpenFileProvider value={bridge.isVSCode ? openFile : null}>
@@ -323,6 +351,7 @@ export function AgentVisualizer() {
         onDiscoveryClick={selection.handleDiscoveryClick}
         selectedDiscoveryId={selection.selectedDiscoveryId}
         showCostOverlay={showCostOverlay}
+        showFinished={showFinished}
       />
 
       {/* Message feed panel (top-left) */}
@@ -445,7 +474,10 @@ export function AgentVisualizer() {
         onCloseSession={handleCloseSession}
         isVSCode={bridge.isVSCode}
         connectionStatus={bridge.connectionStatus}
-        agentCount={agents.size}
+        agentCount={liveAgents.size}
+        finishedCount={finishedCount}
+        showFinished={showFinished}
+        onToggleFinished={toggleShowFinished}
         totalTokens={totalTokens}
         showFileAttention={showFileAttention}
         showTranscript={showTranscript}
