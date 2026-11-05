@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { Particle, Edge, DepthParticle } from '@/lib/agent-types'
 import type { SimulationState } from '@/hooks/simulation/types'
+import { createGhostViewMemo } from '@/hooks/simulation/ghost-view'
 import { getStateColor } from '@/lib/colors'
 import { ANIM_SPEED, PERF_OVERLAY, PERF_OVERLAY_ENABLED, FOCUS_DIM_ALPHA, HOVER_DIM_ALPHA, BLOOM_INTENSITY } from '@/lib/canvas-constants'
 import { BloomRenderer } from './bloom-renderer'
@@ -47,12 +48,14 @@ interface CanvasProps {
   onDiscoveryClick?: (discoveryId: string | null) => void
   selectedDiscoveryId?: string | null
   showCostOverlay?: boolean
+  /** Also draw finished (hidden, not yet expired) agents as dimmed ghosts */
+  showFinished?: boolean
 }
 
 export function AgentCanvas({
   simulationRef,
   selectedAgentId, hoveredAgentId, showStats, showHexGrid, zoomToFitTrigger, pauseAutoFit,
-  onAgentClick, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay,
+  onAgentClick, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -138,6 +141,7 @@ export function AgentCanvas({
   // each id approaches its target at DIM_EASE_RATE / NODE_SIZE_EASE_RATE
   // per second, read from the live on-screen value every frame (so a second
   // click/hover mid-transition retargets instead of snapping).
+  const ghostViewRef = useRef(createGhostViewMemo())
   const dimEaseMapRef = useRef(new EasedValueMap())
   const sizeEaseMapRef = useRef(new EasedValueMap())
   const reducedMotionRef = useRef(prefersReducedMotion())
@@ -150,7 +154,8 @@ export function AgentCanvas({
     agents: sim.agents, toolCalls: sim.toolCalls,
     particles: sim.particles, edges: sim.edges, discoveries: sim.discoveries,
     selectedAgentId, hoveredAgentId, showStats, showHexGrid,
-    showCostOverlay, selectedToolCallId, selectedDiscoveryId,
+    showCostOverlay, selectedToolCallId, selectedDiscoveryId, showFinished: !!showFinished,
+    liveAgents: sim.agents,
     simTime: sim.currentTime, pauseAutoFit, dimensions,
     onAgentDrag, onAgentClick, onAgentHover, onContextMenu,
     onToolCallClick, onDiscoveryClick,
@@ -191,7 +196,7 @@ export function AgentCanvas({
   // Prop-driven visual changes (selection from other panels, toggles, fit) must wake an idle frame driver.
   useEffect(() => { wakeFrames() }, [
     selectedAgentId, hoveredAgentId, showStats, showHexGrid, zoomToFitTrigger, pauseAutoFit,
-    selectedToolCallId, selectedDiscoveryId, showCostOverlay,
+    selectedToolCallId, selectedDiscoveryId, showCostOverlay, showFinished,
   ])
 
   // Keep reducedMotionRef current if the OS setting changes mid-session —
@@ -252,7 +257,8 @@ export function AgentCanvas({
   // ─── Detect state changes → spawn effects ──────────────────────────────
 
   const detectStateChanges = useCallback(() => {
-    const { agents, toolCalls } = drawPropsRef.current
+    // Live agents only: ghosts appearing/disappearing must not trigger spawn/complete effects
+    const { liveAgents: agents, toolCalls } = drawPropsRef.current
     const { effects, newAgentStates, newToolStates } = detectStateChangesPure(
       agents, toolCalls,
       prevAgentStatesRef.current, prevToolStatesRef.current,
@@ -280,10 +286,17 @@ export function AgentCanvas({
       {
         const s = simulationRef.current
         const p = drawPropsRef.current
-        p.agents = s.agents
+        p.liveAgents = s.agents
         p.toolCalls = s.toolCalls
         p.particles = s.particles
-        p.edges = s.edges
+        if (p.showFinished && s.hiddenAgents.size > 0) {
+          const view = ghostViewRef.current(s.agents, s.edges, s.hiddenAgents)
+          p.agents = view.agents
+          p.edges = view.edges
+        } else {
+          p.agents = s.agents
+          p.edges = s.edges
+        }
         p.discoveries = s.discoveries
         p.simTime = s.currentTime
       }

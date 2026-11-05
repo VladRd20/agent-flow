@@ -59,11 +59,11 @@ test('a finished sub-agent fades out, then leaves the graph but is kept hidden',
   assert.ok(s.agents.has('orchestrator'))
 })
 
-test('agent_spawn for a hidden agent restores it with its stats, edge and a Resumed timeline block', () => {
+test('agent_spawn with resumed:true for a hidden agent restores it with its stats, edge and a Resumed timeline block', () => {
   let s = withSubagent({ state: 'complete', completeTime: 0 })
   s.timelineEntries.set('worker', { id: 'timeline-worker', agentId: 'worker', agentName: 'worker', startTime: 0, endTime: 0, blocks: [] })
   s = runUntil(s, 3)
-  s = processEvent({ time: 5, type: 'agent_spawn', payload: { name: 'worker', parent: 'orchestrator' } }, at(s, 5), ctx)
+  s = processEvent({ time: 5, type: 'agent_spawn', payload: { name: 'worker', parent: 'orchestrator', resumed: true } }, at(s, 5), ctx)
   const w = s.agents.get('worker')!
   assert.ok(w, 'back in the graph')
   assert.equal(w.state, 'idle')
@@ -77,6 +77,20 @@ test('agent_spawn for a hidden agent restores it with its stats, edge and a Resu
   assert.equal(entry.blocks.at(-1)?.label, 'Resumed')
   s = runUntil(s, 7)
   assert.ok(s.agents.get('worker')!.opacity > 0.9, 'fades back in')
+})
+
+test('agent_spawn without resumed creates a fresh node and discards the hidden one', () => {
+  let s = withSubagent({ state: 'complete', completeTime: 0 })
+  s = runUntil(s, 3)
+  assert.ok(s.hiddenAgents.has('worker'))
+  s = processEvent({ time: 5, type: 'agent_spawn', payload: { name: 'worker', parent: 'orchestrator', task: 'new job' } }, at(s, 5), ctx)
+  const w = s.agents.get('worker')!
+  assert.ok(w)
+  assert.equal(w.toolCalls, 0, 'no inherited stats')
+  assert.equal(w.tokensUsed, 0)
+  assert.equal(w.task, 'new job')
+  assert.equal(s.hiddenAgents.has('worker'), false, 'stale hidden entry dropped')
+  assert.equal(s.edges.filter(e => e.to === 'worker').length, 1)
 })
 
 test('a new tool call from a hidden agent also revives it (resume paths without agent_spawn)', () => {

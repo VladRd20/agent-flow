@@ -465,7 +465,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     const prev = frameRef.current
     const newAgents = new Map(prev.agents)
     const agent = newAgents.get(agentId)
-    if (agent) newAgents.set(agentId, { ...agent, x, y, pinned: true })
+    if (!agent) return // e.g. a dimmed finished node: not part of the simulation
+    newAgents.set(agentId, { ...agent, x, y, pinned: true })
     frameRef.current = { ...prev, agents: newAgents }
 
     if (forceSimRef.current) {
@@ -540,7 +541,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // Canvas reads frameRef directly for 60fps rendering
     frameRef,
     // UI components use React state (updated only on events/user actions)
-    agents: state.agents, toolCalls: state.toolCalls,
+    agents: state.agents, hiddenAgents: state.hiddenAgents, toolCalls: state.toolCalls,
     particles: state.particles, edges: state.edges,
     discoveries: state.discoveries,
     fileAttention: state.fileAttention,

@@ -304,7 +304,7 @@ export function readSubagentNewLines(
   // orchestrator node is resurrected in resetInactivityTimer.
   if (state.completed) {
     state.completed = false
-    emitSubagentSpawn(delegate, ORCHESTRATOR_NAME, state.agentName, state.agentName, sessionId)
+    emitSubagentSpawn(delegate, ORCHESTRATOR_NAME, state.agentName, state.agentName, sessionId, true)
   }
 
   for (const line of result.lines) {
