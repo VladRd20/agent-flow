@@ -45,6 +45,7 @@ function AgentChatPanelImpl({
       mobilePosition={{ bottom: 'var(--af-detail-h)', left: 0, right: 0 }}
       mobileWidth="100%"
       mobileAxis="Y"
+      mobileClassName="af-chat-slot"
       {...stopPropagationHandlers}
     >
       <div

@@ -7,6 +7,8 @@ const AUTOFIT_AGENT_PADDING = 22
 const FIT_LABEL_ROOM = 32
 /** Auto-fit never zooms a sparse graph (e.g. a lone orchestrator) in past this. */
 const FIT_MAX_SCALE = 1.5
+/** Fit the whole graph when natural zoom is within this fraction of the label-clearance floor. */
+const FIT_CLAMP_TOLERANCE = 0.85
 
 /** Screen px a main's label plate needs on each axis before neighbouring plates stop overlapping. */
 const LABEL_CLEAR_X = 170
@@ -221,7 +223,9 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   // All view: don't zoom out past the point where cluster labels collide. If that
   // clamps the zoom the graph no longer fits, so frame the top clusters (the user pans down).
   const minScale = focusScope ? 0 : Math.min(minLabelClearScale(agents.values()), FIT_MAX_SCALE)
-  const clamped = minScale > natural
+  // A graph that only just misses the label-clearance floor is shown whole (the declutter pass
+  // hides colliding labels) rather than leaving its lowest node half under the control bar.
+  const clamped = minScale > natural && natural < minScale * FIT_CLAMP_TOLERANCE
   const scale = clamped ? minScale : natural
   const bandTop = availH - padTop - padBottom >= availH * 0.5 ? top + padTop : top + (availH - innerH) / 2
   const result = {

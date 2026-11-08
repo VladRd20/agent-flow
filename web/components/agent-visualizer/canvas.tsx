@@ -2,6 +2,7 @@
 
 import { setViewAspect } from '@/lib/view-aspect'
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { getBottomInset } from '@/lib/layout-insets'
 import { Particle, Edge, DepthParticle } from '@/lib/agent-types'
 import type { SimulationState } from '@/hooks/simulation/types'
 import { createGhostViewMemo } from '@/hooks/simulation/ghost-view'
@@ -456,7 +457,7 @@ export function AgentCanvas({
 
       // Screen-space label/bubble/tool-card layout (priority declutter) for this frame
       beginOverlayFrame({
-        ctx, agents, toolCalls, transform, viewport: { width: w, height: h }, dpr, deltaTime,
+        ctx, agents, toolCalls, transform, viewport: { width: w, height: h }, dpr, deltaTime, bottomInset: getBottomInset(),
         simTime: simTimeRef.current, selectedAgentId, hoveredAgentId, selectedToolCallId,
         focusSet, degreeMap, sizeMap: sizeEaseMapRef.current,
       })
@@ -465,13 +466,14 @@ export function AgentCanvas({
       drawEdges(ctx, edges, agents, toolCalls, activeEdgeIds, timeRef.current, focusSet, selectedAgentId ?? hoveredAgentId, dimAlpha, dimEase)
       drawToolCalls(ctx, toolCalls, timeRef.current, selectedToolCallId, focusSet, dimAlpha, dimEase)
       drawDiscoveries(ctx, discoveries, agents, selectedDiscoveryId)
+      // Bubbles first: node name plates are drawn over them, never the other way round
+      drawMessageBubblesWorld(ctx, agents, simTimeRef.current)
       drawAgents(ctx, agents, selectedAgentId, hoveredAgentId, showStats, timeRef.current, focusSet, degreeMap, transform.scale, dimAlpha, agentEase)
 
       // Drop ids that weren't drawn this frame (agent/edge/tool removed) so
       // the eased-value maps don't grow unbounded over a long session.
       dimEaseMapRef.current.sweep()
       sizeEaseMapRef.current.sweep()
-      drawMessageBubblesWorld(ctx, agents, simTimeRef.current)
       if (showCostOverlay) drawCostLabels(ctx, agents, toolCalls)
       drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)
       drawEffects(ctx, effectsRef.current)
