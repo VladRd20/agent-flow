@@ -436,6 +436,7 @@ export function AgentVisualizer() {
 
       <ViewControls
         hidden={mobileSheetOpen}
+        keepInLandscape={isMobile && !!selectedAgent && !showFileAttention && !showTranscript && !showTimeline}
         frozen={freeze.frozen}
         onZoomIn={() => sendViewCommand('zoomIn')}
         onZoomOut={() => sendViewCommand('zoomOut')}

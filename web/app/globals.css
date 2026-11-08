@@ -284,16 +284,16 @@ input, textarea {
 
 /* Edge fade for horizontally scrolling strips that overflow. */
 .af-fade-end {
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 64px), transparent calc(100% - 20px));
+  mask-image: linear-gradient(90deg, #000 calc(100% - 64px), transparent calc(100% - 20px));
 }
 .af-fade-start {
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px);
   mask-image: linear-gradient(90deg, transparent, #000 28px);
 }
 .af-fade-both {
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 64px), transparent calc(100% - 20px));
+  mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 64px), transparent calc(100% - 20px));
 }
 
 /* Mouse: compact chips stay compact, but their hit area is at least 24x24 (WCAG 2.5.8). */
@@ -421,8 +421,10 @@ button:focus-visible,
   .af-mh-detail {
     right: auto !important;
     width: 40%;
-    max-height: calc(100vh - var(--af-sheet-top));
-    max-height: calc(100dvh - var(--af-sheet-top));
+    /* Leave the view-control row (44px + gaps) and the control bar reachable below the card */
+    bottom: calc(var(--af-above-bar) + 60px) !important;
+    max-height: calc(100vh - var(--af-sheet-top) - var(--af-above-bar) - 60px);
+    max-height: calc(100dvh - var(--af-sheet-top) - var(--af-above-bar) - 60px);
   }
   .af-chat-slot {
     left: 40% !important;
@@ -444,4 +446,9 @@ button:focus-visible,
 html[data-af-menu-open] .af-feed-pill {
   visibility: hidden;
   pointer-events: none;
+}
+
+/* View controls stay hidden under portrait sheets; landscape phones keep them (the sheets leave room). */
+@media not all and (pointer: coarse) and (max-height: 500px) and (min-aspect-ratio: 3/2) {
+  .af-vc-portrait-hide { display: none !important; pointer-events: none !important; }
 }

@@ -2,7 +2,7 @@
 
 import { setViewAspect } from '@/lib/view-aspect'
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { getBottomInset, getTopInset, getRightInset } from '@/lib/layout-insets'
+import { getBottomInset, getTopInset, getRightInset, getKeepOuts } from '@/lib/layout-insets'
 import { Particle, Edge, DepthParticle } from '@/lib/agent-types'
 import type { SimulationState } from '@/hooks/simulation/types'
 import { createGhostViewMemo } from '@/hooks/simulation/ghost-view'
@@ -478,7 +478,7 @@ export function AgentCanvas({
       // Screen-space label/bubble/tool-card layout (priority declutter) for this frame
       beginOverlayFrame({
         ctx, agents, toolCalls, transform, viewport: { width: w, height: h }, dpr, deltaTime, bottomInset: getBottomInset(),
-        topInset: getTopInset(), rightInset: getRightInset(),
+        topInset: getTopInset(), rightInset: getRightInset(), keepOut: getKeepOuts(),
         simTime: simTimeRef.current, selectedAgentId, hoveredAgentId, selectedToolCallId,
         focusSet, degreeMap, sizeMap: sizeEaseMapRef.current,
       })

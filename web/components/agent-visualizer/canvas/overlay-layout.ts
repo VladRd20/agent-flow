@@ -41,6 +41,8 @@ export interface OverlayInput {
   topInset?: number
   /** Px at the right covered by chrome (wide-layout cost card); labels/bubbles/tool cards clamp left of it */
   rightInset?: number
+  /** Screen rects of floating chrome (view controls) that bubbles and tool cards must route around */
+  keepOut?: Rect[]
   deltaTime: number
   /** Sim time used for bubble lifetimes */
   simTime: number
@@ -365,6 +367,8 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
   sweepFade(labelFade, liveLabels)
 
   // 3. Message bubbles (placed after labels; try right, left, above, below).
+  // Floating chrome (view controls) is an obstacle for bubbles and tool cards, not for node labels
+  for (const k of input.keepOut ?? []) placed.add({ x: k.x - 4, y: k.y - 4, w: k.w + 8, h: k.h + 8 }, 'chrome')
   const maxBubbles = compact ? 2 : 3
   const bubbleMaxW = Math.min(BUBBLE_MAX_W, Math.max(120, vw * 0.62))
   const bubbleLines = compact ? 4 : BUBBLE_MAX_LINES

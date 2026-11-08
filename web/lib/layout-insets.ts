@@ -85,3 +85,44 @@ export function setLeftInset(key: string, px: number): void {
 export function getLeftInset(): number {
   return leftInsetPx
 }
+
+/**
+ * Extra bottom clearance that only fit-to-view honours (landscape-phone view-control row
+ * sitting above the control bar). Unlike the bottom inset it does not move menus or overlays.
+ */
+const fitBottoms = new Map<string, number>()
+let fitBottomPx = 0
+
+export function setFitBottomInset(key: string, px: number): void {
+  const v = Math.max(0, Math.round(px))
+  if (v > 0) fitBottoms.set(key, v)
+  else fitBottoms.delete(key)
+  let max = 0
+  for (const n of fitBottoms.values()) if (n > max) max = n
+  if (max === fitBottomPx) return
+  fitBottomPx = max
+  wakeFrames()
+}
+
+export function getFitBottomInset(): number {
+  return fitBottomPx
+}
+
+/**
+ * Screen-space rects of floating chrome (view controls) that canvas overlays such as
+ * message bubbles and tool cards must route around.
+ */
+export interface KeepOutRect { x: number; y: number; w: number; h: number }
+const keepOuts = new Map<string, KeepOutRect>()
+let keepOutList: KeepOutRect[] = []
+
+export function setKeepOut(key: string, rect: KeepOutRect | null): void {
+  if (rect && rect.w > 0 && rect.h > 0) keepOuts.set(key, rect)
+  else keepOuts.delete(key)
+  keepOutList = [...keepOuts.values()]
+  wakeFrames()
+}
+
+export function getKeepOuts(): KeepOutRect[] {
+  return keepOutList
+}
