@@ -1,5 +1,6 @@
 "use client"
 
+import { useSheetKeepOuts } from '@/hooks/use-sheet-keep-outs'
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from "react"
 import { useAgentSimulation } from "@/hooks/use-agent-simulation"
 import { ledgerBreakdown } from "./canvas/draw-cost"
@@ -298,6 +299,7 @@ export function AgentVisualizer() {
   // so the control bar steps out of the way instead of stacking under them.
   const isMobile = useIsMobile()
   const mobileSheetOpen = isMobile && (showFileAttention || showTranscript || showTimeline || !!selectedAgent)
+  useSheetKeepOuts(isMobile)
 
   const freeze = useLayoutFreeze({
     stateRef: freezeStateRef, isMobile, agentCount: liveAgents.size, sessionKey: bridge.selectedSessionId,
