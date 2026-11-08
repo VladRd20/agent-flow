@@ -198,7 +198,7 @@ function LiveControlBar({
           type="button"
           aria-label="Enter review mode"
           onClick={onEnterReview}
-          className="af-hit px-2.5 py-1 rounded text-[10px] font-mono transition-all hover:scale-105"
+          className={`af-hit px-2.5 py-1 rounded text-[10px] font-mono transition-all hover:scale-105 ${isMobile ? 'min-h-11' : ''}`}
           style={{
             background: COLORS.holoBg10,
             border: `1px solid ${COLORS.reviewBtnBorder}`,
@@ -356,7 +356,7 @@ function ReviewControlBar({
       type="button"
       aria-label={isPlaying ? 'Pause' : 'Play'}
       onClick={onPlayPause}
-      className="af-hit w-9 h-9 rounded-full flex items-center justify-center transition-all shrink-0 hover:scale-110"
+      className={`af-hit ${isMobile ? 'w-11 h-11' : 'w-9 h-9'} rounded-full flex items-center justify-center transition-all shrink-0 hover:scale-110`}
       style={{
         background: isPlaying ? COLORS.playBtnActiveBg : COLORS.playBtnBg,
         border: `1.5px solid ${COLORS.playBtnBorder}`,
@@ -386,8 +386,8 @@ function ReviewControlBar({
       type="button"
       aria-label={`Playback speed ${speed}x, tap to change`}
       onClick={cycleSpeed}
-      className="af-hit px-2.5 py-1 rounded text-[10px] font-mono transition-all shrink-0"
-      style={{ background: COLORS.playBtnActiveBg, color: COLORS.textPrimary, minWidth: 40 }}
+      className="af-hit px-2.5 py-1 rounded text-[10px] font-mono transition-all shrink-0 min-h-11"
+      style={{ background: COLORS.playBtnActiveBg, color: COLORS.textPrimary, minWidth: 44 }}
     >
       {speed}x
     </button>
@@ -417,7 +417,7 @@ function ReviewControlBar({
       type="button"
       aria-label="Resume live"
       onClick={onResumeLive}
-      className="af-hit px-2.5 py-1 rounded text-[10px] font-mono font-semibold transition-all hover:scale-105 shrink-0"
+      className={`af-hit px-2.5 py-1 rounded text-[10px] font-mono font-semibold transition-all hover:scale-105 shrink-0 ${isMobile ? 'min-h-11' : ''}`}
       style={{
         background: COLORS.liveResumeBg,
         border: `1px solid ${COLORS.liveResumeBorder}`,
@@ -433,7 +433,7 @@ function ReviewControlBar({
       type="button"
       aria-label="Restart"
       onClick={onRestart}
-      className="af-hit text-sm px-1 transition-all shrink-0 hover:scale-110"
+      className={`af-hit text-sm px-1 transition-all shrink-0 hover:scale-110 ${isMobile ? 'min-w-11 min-h-11' : ''}`}
       style={{ color: COLORS.textDim }}
     >
       ⟲

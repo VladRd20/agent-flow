@@ -30,6 +30,8 @@ import { useCanvasCamera } from '@/hooks/use-canvas-camera'
 import { useCanvasInteraction } from '@/hooks/use-canvas-interaction'
 import { frameDriver, wakeFrames, cappedDpr, PERF_STATS_ENABLED, type FrameMode } from '@/lib/frame-driver'
 import { prefersReducedMotion, subscribeReducedMotion } from '@/lib/reduced-motion'
+import { isLayoutFrozen, type FreezeState } from '@/lib/layout-freeze'
+import { nextRunningAgentId, ZOOM_STEP, type ViewCommand } from '@/lib/view-commands'
 import { DIM_EASE_RATE, NODE_SIZE_EASE_RATE, REDUCED_MOTION_EASE_MULTIPLIER } from '@/lib/canvas-constants'
 
 interface CanvasProps {
@@ -56,12 +58,16 @@ interface CanvasProps {
   showFinished?: boolean
   /** Text alternative for the graph canvas (agent count, cost) */
   ariaLabel?: string
+  /** One-shot camera command from the on-screen view controls */
+  viewCommand?: ViewCommand | null
+  /** Freeze-layout state (read per frame): pauses ambient animation and particles */
+  freezeRef?: React.RefObject<FreezeState>
 }
 
 export function AgentCanvas({
   simulationRef,
   selectedAgentId, hoveredAgentId, showStats, showHexGrid, zoomToFitTrigger, pauseAutoFit,
-  onAgentClick, onAgentOpen, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished, ariaLabel,
+  onAgentClick, onAgentOpen, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished, ariaLabel, viewCommand, freezeRef,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -173,7 +179,7 @@ export function AgentCanvas({
   // ─── Camera ─────────────────────────────────────────────────────────────
   const {
     transformRef, userHasNavigatedRef, panVelocityRef,
-    screenToCanvas, doZoomToFit, updateCamera,
+    screenToCanvas, doZoomToFit, zoomBy, focusAgent, updateCamera,
   } = useCanvasCamera({
     mainCanvasRef, drawPropsRef, simTimeRef, dimensions,
     agentCount: sim.agents.size, zoomToFitTrigger, selectedAgentId,
@@ -186,6 +192,19 @@ export function AgentCanvas({
     drawPropsRef, transformRef, userHasNavigatedRef, panVelocityRef,
     simTimeRef, screenToCanvas, doZoomToFit, mainCanvasRef,
   })
+
+  // View-control buttons (zoom in/out, focus next running agent)
+  const lastFocusedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!viewCommand) return
+    if (viewCommand.kind === 'zoomIn') zoomBy(ZOOM_STEP)
+    else if (viewCommand.kind === 'zoomOut') zoomBy(1 / ZOOM_STEP)
+    else {
+      const id = nextRunningAgentId(drawPropsRef.current.liveAgents, lastFocusedRef.current)
+      if (id) { lastFocusedRef.current = id; focusAgent(id) }
+    }
+    wakeFrames()
+  }, [viewCommand, zoomBy, focusAgent])
 
   // Keep drawPropsRef in sync with interaction state
   drawPropsRef.current.isDragging = isDragging
@@ -352,14 +371,15 @@ export function AgentCanvas({
         seen.stats = showStats; seen.hex = showHexGrid; seen.cost = showCostOverlay
         settleUntilRef.current = timestamp + 700
       }
-      // Subtle ambient animation (pulsing active agents, bubble/tool timers)
-      let ambient = toolCalls.size > 0 || discoveries.length > 0
-      if (!ambient) {
+      // Subtle ambient animation (pulsing active agents, bubble/tool timers); paused while the layout is frozen
+      const frozen = !!freezeRef?.current && isLayoutFrozen(freezeRef.current, timestamp)
+      let ambient = !frozen && (toolCalls.size > 0 || discoveries.length > 0)
+      if (!ambient && !frozen) {
         for (const a of agents.values()) {
           if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission' || a.messageBubbles.length > 0) { ambient = true; break }
         }
       }
-      const busyFull = particles.length > 0 || effectsRef.current.length > 0 || timestamp < settleUntilRef.current
+      const busyFull = (!frozen && particles.length > 0) || effectsRef.current.length > 0 || timestamp < settleUntilRef.current
       if (!changed && !ambient && !busyFull) return 'idle'
       timeRef.current += deltaTime
 
@@ -476,7 +496,7 @@ export function AgentCanvas({
       dimEaseMapRef.current.sweep()
       sizeEaseMapRef.current.sweep()
       if (showCostOverlay) drawCostLabels(ctx, agents, toolCalls)
-      drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)
+      if (!frozen) drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)
       drawEffects(ctx, effectsRef.current)
 
       if (selectedAgentId) {
@@ -536,7 +556,7 @@ export function AgentCanvas({
       }
       return 'slow'
     }
-  }, [detectStateChanges, updateCamera, updateDragLerp, transformRef, simulationRef])
+  }, [detectStateChanges, updateCamera, updateDragLerp, transformRef, simulationRef, freezeRef])
 
   drawRef.current = draw
 

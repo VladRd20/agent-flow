@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback, type MutableRefObject } from 'react'
 import { Agent, ToolCallNode, Discovery, ANIM } from '@/lib/agent-types'
 import { getBottomInset, getTopInset, getRightInset } from '@/lib/layout-insets'
+import { CAMERA } from '@/lib/canvas-constants'
 import { computeFitTransform as computeFitTransformPure, createFitCache, type Transform } from '@/lib/compute-fit-transform'
 
 export type { Transform }
@@ -62,6 +63,38 @@ export function useCanvasCamera({
     const target = computeFitTransform()
     if (target) targetTransformRef.current = target
   }, [computeFitTransform])
+
+  /** Visible-area centre (between the top chrome and the bottom bar). */
+  const viewCentre = useCallback(() => {
+    const { dimensions } = drawPropsRef.current
+    const top = getTopInset()
+    const bottom = getBottomInset()
+    return { cx: dimensions.width / 2, cy: top + Math.max(0, dimensions.height - top - bottom) / 2 }
+  }, [drawPropsRef])
+
+  /** Single-pointer zoom (buttons): eases toward a scaled transform around the view centre. */
+  const zoomBy = useCallback((factor: number) => {
+    const prev = targetTransformRef.current ?? transformRef.current
+    const scale = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, prev.scale * factor))
+    if (scale === prev.scale) return
+    const { cx, cy } = viewCentre()
+    const k = scale / prev.scale
+    userHasNavigatedRef.current = true
+    panVelocityRef.current.active = false
+    targetTransformRef.current = { scale, x: cx - (cx - prev.x) * k, y: cy - (cy - prev.y) * k }
+  }, [viewCentre])
+
+  /** Pan (and zoom in if far out) so an agent sits at the view centre. */
+  const focusAgent = useCallback((agentId: string) => {
+    const agent = drawPropsRef.current.agents.get(agentId)
+    if (!agent) return
+    const { cx, cy } = viewCentre()
+    const base = targetTransformRef.current ?? transformRef.current
+    const scale = Math.max(base.scale, 0.8)
+    userHasNavigatedRef.current = true
+    panVelocityRef.current.active = false
+    targetTransformRef.current = { scale, x: cx - agent.x * scale, y: cy - agent.y * scale }
+  }, [drawPropsRef, viewCentre])
 
   useEffect(() => {
     if (zoomToFitTrigger && zoomToFitTrigger > 0) doZoomToFit()
@@ -132,6 +165,8 @@ export function useCanvasCamera({
     panVelocityRef,
     screenToCanvas,
     doZoomToFit,
+    zoomBy,
+    focusAgent,
     updateCamera,
   }
 }

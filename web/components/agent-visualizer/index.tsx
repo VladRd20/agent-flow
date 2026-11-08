@@ -10,6 +10,10 @@ import { useSelectionState } from "@/hooks/use-selection-state"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { AgentCanvas } from "./canvas"
 import { ControlBar } from "./control-bar"
+import { ViewControls } from "./view-controls"
+import { useLayoutFreeze } from "@/hooks/use-layout-freeze"
+import { createFreezeState } from "@/lib/layout-freeze"
+import type { ViewCommand } from "@/lib/view-commands"
 import { AgentDetailCard } from "./agent-detail-card"
 import { GlassContextMenu } from "./glass-context-menu"
 import { ToolDetailPopup } from "./tool-detail-popup"
@@ -41,6 +45,9 @@ export function AgentVisualizer() {
   const bridge = useVSCodeBridge()
   // Stable callbacks pulled out so hook deps are exact (bridge itself is a new object each render)
   const { getSessionEventCount, takeSwitchCursor, flushSessionEvents, removeSession, selectSession, bridgeOpenFile, rebuildAll, allRebuildToken } = bridge
+
+  // Freeze-layout state is created here so the simulation loop can read it; the controller hook follows below
+  const freezeStateRef = useRef(createFreezeState())
 
   const {
     frameRef,
@@ -75,6 +82,7 @@ export function AgentVisualizer() {
     // so the animation frame never uses a stale filter value.
     sessionFilterRef: bridge.selectedSessionIdRef,
     disable1MContext: bridge.disable1MContext,
+    layoutFreezeRef: freezeStateRef,
   })
 
   // "Show finished": finished (hidden, not yet expired) agents drawn as dimmed ghosts.
@@ -290,6 +298,14 @@ export function AgentVisualizer() {
   // so the control bar steps out of the way instead of stacking under them.
   const isMobile = useIsMobile()
   const mobileSheetOpen = isMobile && (showFileAttention || showTranscript || showTimeline || !!selectedAgent)
+
+  const freeze = useLayoutFreeze({
+    stateRef: freezeStateRef, isMobile, agentCount: liveAgents.size, sessionKey: bridge.selectedSessionId,
+  })
+  const [viewCommand, setViewCommand] = useState<ViewCommand | null>(null)
+  const sendViewCommand = useCallback((kind: ViewCommand['kind']) => {
+    setViewCommand(prev => ({ seq: (prev?.seq ?? 0) + 1, kind }))
+  }, [])
   const selectedConversation = selection.selectedAgentId ? (conversations.get(selection.selectedAgentId) || []) : []
 
   // Session runtime — drives the assistant label (CLAUDE vs CODEX) in transcript panels
@@ -400,6 +416,18 @@ export function AgentVisualizer() {
         showCostOverlay={showCostOverlay}
         showFinished={showFinished}
         ariaLabel={canvasAriaLabel}
+        viewCommand={viewCommand}
+        freezeRef={freeze.stateRef}
+      />
+
+      <ViewControls
+        hidden={mobileSheetOpen}
+        frozen={freeze.frozen}
+        onZoomIn={() => sendViewCommand('zoomIn')}
+        onZoomOut={() => sendViewCommand('zoomOut')}
+        onFit={() => setZoomToFitTrigger(n => n + 1)}
+        onFocusNext={() => sendViewCommand('focusNextRunning')}
+        onToggleFreeze={freeze.toggle}
       />
 
       {/* Message feed panel (top-left). On phones the files/transcript sheets start at the

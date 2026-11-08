@@ -23,6 +23,7 @@ import { buildForceConfig, type ForceConfig } from './simulation/force-config'
 import { onViewAspectChange } from '@/lib/view-aspect'
 import { clusterOutwardAngle } from './simulation/main-anchors'
 import { ALL_SESSIONS_ID } from '@/lib/all-sessions'
+import { isLayoutFrozen } from '@/lib/layout-freeze'
 import { frameDriver, wakeFrames, PERF_STATS_ENABLED, type FrameMode } from '@/lib/frame-driver'
 
 /** Per-frame time budget for folding a replay backlog, and fold slice size. */
@@ -30,7 +31,7 @@ const FOLD_BUDGET_MS = 8
 const FOLD_SLICE = 250
 
 export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
-  const { useMockData = true, externalEvents, onExternalEventsConsumed, sessionFilter, sessionFilterRef: externalFilterRef, disable1MContext = false } = options
+  const { useMockData = true, externalEvents, onExternalEventsConsumed, sessionFilter, sessionFilterRef: externalFilterRef, disable1MContext = false, layoutFreezeRef } = options
   const internalFilterRef = useRef(sessionFilter)
   internalFilterRef.current = sessionFilter
   const sessionFilterRef = externalFilterRef ?? internalFilterRef
@@ -350,7 +351,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // Force tick — updates agent positions in frameRef. Skipped once the
     // layout has cooled; syncForceSimulation/drag re-heat it.
     const fsim = forceSimRef.current
-    const simHot = !!fsim && fsim.alpha() >= fsim.alphaMin()
+    const layoutFrozen = !!layoutFreezeRef?.current && isLayoutFrozen(layoutFreezeRef.current, performance.now())
+    const simHot = !!fsim && !layoutFrozen && fsim.alpha() >= fsim.alphaMin()
     if (simHot) { fsim!.tick(); applyForcePositions(fsim!) }
 
     // Throttle React re-renders — UI updates at most ~4/sec, canvas stays smooth via frameRef
@@ -375,10 +377,13 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       || result.agents !== prev.agents || result.toolCalls !== prev.toolCalls
       || result.edges !== prev.edges || result.particles !== prev.particles
       || result.discoveries !== prev.discoveries) return 'full'
-    if (result.toolCalls.size > 0 || result.discoveries.length > 0) return 'slow'
-    for (const a of result.agents.values()) {
-      if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission'
-        || a.messageBubbles.length > 0) return 'slow'
+    // Frozen layout: no ambient animation, so nothing is pending and the loop may idle
+    if (!layoutFrozen) {
+      if (result.toolCalls.size > 0 || result.discoveries.length > 0) return 'slow'
+      for (const a of result.agents.values()) {
+        if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission'
+          || a.messageBubbles.length > 0) return 'slow'
+      }
     }
     // Settling into idle: flush one final UI commit so throttled-away state
     // (last events, final clock value) reaches React before the loop stops.
