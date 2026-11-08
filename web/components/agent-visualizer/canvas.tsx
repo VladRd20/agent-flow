@@ -53,12 +53,14 @@ interface CanvasProps {
   showCostOverlay?: boolean
   /** Also draw finished (hidden, not yet expired) agents as dimmed ghosts */
   showFinished?: boolean
+  /** Text alternative for the graph canvas (agent count, cost) */
+  ariaLabel?: string
 }
 
 export function AgentCanvas({
   simulationRef,
   selectedAgentId, hoveredAgentId, showStats, showHexGrid, zoomToFitTrigger, pauseAutoFit,
-  onAgentClick, onAgentOpen, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished,
+  onAgentClick, onAgentOpen, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished, ariaLabel,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -547,6 +549,8 @@ export function AgentCanvas({
     <div ref={containerRef} className="relative w-full h-full overflow-hidden" style={{ cursor: isDragging ? 'grabbing' : 'grab' }}>
       <canvas
         ref={mainCanvasRef}
+        role="img"
+        aria-label={ariaLabel ?? 'Agent graph'}
         style={{ width: dimensions.width, height: dimensions.height, touchAction: 'none' }}
         {...handlers}
         className="w-full h-full"

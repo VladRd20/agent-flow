@@ -63,6 +63,26 @@ export function SessionTabs({
     el?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
   }, [selectedSessionId])
 
+  // WAI-ARIA tabs: roving tabindex + Arrow/Home/End, automatic activation.
+  const tabIds = sessions.length > 0 ? [ALL_SESSIONS_ID, ...sessions.map(x => x.id)] : []
+  const focusableId = selectedSessionId && tabIds.includes(selectedSessionId) ? selectedSessionId : tabIds[0]
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    if (target.getAttribute('role') !== 'tab') return
+    const cur = tabIds.indexOf(target.dataset.tabId ?? '')
+    if (cur < 0) return
+    let next = cur
+    if (e.key === 'ArrowRight') next = (cur + 1) % tabIds.length
+    else if (e.key === 'ArrowLeft') next = (cur - 1 + tabIds.length) % tabIds.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = tabIds.length - 1
+    else return
+    e.preventDefault()
+    const id = tabIds[next]
+    onSelectSession(id)
+    tabRefs.current.get(id)?.querySelector<HTMLElement>('[role="tab"]')?.focus()
+  }
+
   const fadeClass = fade === 'none' ? '' : `af-fade-${fade}`
 
   return (
@@ -71,7 +91,7 @@ export function SessionTabs({
       className={`min-w-0 overflow-x-auto overflow-y-hidden scrollbar-hide snap-x overscroll-x-contain ${fadeClass}`}
       style={{ touchAction: 'pan-x', scrollPaddingInline: 12 }}
     >
-      <div role="tablist" aria-label="Sessions" className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
+      <div role="tablist" aria-label="Sessions" onKeyDown={onTabKeyDown} className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
         {sessions.length > 0 && (() => {
           const isSelected = selectedSessionId === ALL_SESSIONS_ID
           const anyActive = sessions.some(x => x.status === 'active')
@@ -91,6 +111,8 @@ export function SessionTabs({
                 role="tab"
                 aria-selected={isSelected}
                 aria-label={`All sessions (${sessions.length})`}
+                data-tab-id={ALL_SESSIONS_ID}
+                tabIndex={focusableId === ALL_SESSIONS_ID ? 0 : -1}
                 onClick={() => onSelectSession(ALL_SESSIONS_ID)}
                 className="af-hit pl-1.5 py-0.5 pr-1.5 flex items-center gap-1 min-w-0 self-stretch"
                 style={{ whiteSpace: 'nowrap', color: 'inherit' }}
@@ -137,6 +159,8 @@ export function SessionTabs({
                 type="button"
                 role="tab"
                 aria-selected={isSelected}
+                data-tab-id={session.id}
+                tabIndex={focusableId === session.id ? 0 : -1}
                 onClick={() => onSelectSession(session.id)}
                 className="af-hit pl-1.5 py-0.5 pr-1 flex items-center gap-1 min-w-0 self-stretch"
                 style={{ whiteSpace: 'nowrap', color: 'inherit' }}

@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from "react"
 import { useAgentSimulation } from "@/hooks/use-agent-simulation"
+import { ledgerBreakdown } from "./canvas/draw-cost"
+import { formatTokens } from "@/lib/utils"
 import { ledgerTotalTokens } from "@/hooks/simulation/usage-ledger"
 import { useVSCodeBridge } from "@/hooks/use-vscode-bridge"
 import { useSelectionState } from "@/hooks/use-selection-state"
@@ -276,6 +278,13 @@ export function AgentVisualizer() {
   // Cumulative: includes sub-agents that have faded out or expired from the graph
   const totalTokens = useMemo(() => ledgerTotalTokens(usageLedger), [usageLedger])
 
+  // Text alternative for the canvas-drawn graph and cost card (cost from the cumulative ledger)
+  const canvasAriaLabel = useMemo(() => {
+    const { totalCost } = ledgerBreakdown(usageLedger)
+    const n = liveAgents.size
+    return `Agent graph: ${n} ${n === 1 ? 'agent' : 'agents'}, ${formatTokens(totalTokens)} tokens, about $${totalCost.toFixed(2)}`
+  }, [liveAgents, usageLedger, totalTokens])
+
   const selectedAgent = selection.selectedAgentId ? agents.get(selection.selectedAgentId) : null
   // On phones, sheets (files / transcript / timeline / agent detail+chat) take over the bottom,
   // so the control bar steps out of the way instead of stacking under them.
@@ -386,6 +395,7 @@ export function AgentVisualizer() {
         selectedDiscoveryId={selection.selectedDiscoveryId}
         showCostOverlay={showCostOverlay}
         showFinished={showFinished}
+        ariaLabel={canvasAriaLabel}
       />
 
       {/* Message feed panel (top-left) */}
