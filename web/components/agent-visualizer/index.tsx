@@ -1,5 +1,6 @@
 "use client"
 
+import { formatCostUsd } from '@/lib/cost-summary'
 import { useSheetKeepOuts } from '@/hooks/use-sheet-keep-outs'
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from "react"
 import { useAgentSimulation } from "@/hooks/use-agent-simulation"
@@ -291,7 +292,7 @@ export function AgentVisualizer() {
   const totalCost = useMemo(() => ledgerBreakdown(usageLedger).totalCost, [usageLedger])
   const canvasAriaLabel = useMemo(() => {
     const n = liveAgents.size
-    return `Agent graph: ${n} ${n === 1 ? 'agent' : 'agents'}, ${formatTokens(totalTokens)} tokens, about $${totalCost.toFixed(2)}`
+    return `Agent graph: ${n} ${n === 1 ? 'agent' : 'agents'}, ${formatTokens(totalTokens)} tokens, about ${formatCostUsd(totalCost)}`
   }, [liveAgents, totalTokens, totalCost])
 
   const selectedAgent = selection.selectedAgentId ? agents.get(selection.selectedAgentId) : null

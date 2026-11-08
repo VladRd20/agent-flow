@@ -3,6 +3,7 @@ import { Agent, ToolCallNode, NODE } from '@/lib/agent-types'
 import { COLORS, getAgentGroupColor, getModelFamily } from '@/lib/colors'
 import { FONT, COST_RATE, MODEL_FAMILY_COST, COST_DRAW, COST_PANEL, MIN_VISIBLE_OPACITY } from '@/lib/canvas-constants'
 import { formatTokens } from '@/lib/utils'
+import { formatCostUsd } from '@/lib/cost-summary'
 import { truncateText } from './draw-misc'
 import { getOverlayFrame } from './overlay-layout'
 import { getTopInset, setTopInset, setRightInset } from '@/lib/layout-insets'
@@ -60,7 +61,7 @@ export function drawCostLabels(
     const pillY = agent.y - r - COST_DRAW.pillYOffset
 
     // Floating cost pill
-    const label = `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`
+    const label = formatCostUsd(cost)
     ctx.font = FONT.mono(9, 'bold')
     const labelW = ctx.measureText(label).width
     const pillW = labelW + COST_DRAW.pillPadding
@@ -312,11 +313,11 @@ export function drawCostSummaryPanel(
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
   ctx.fillStyle = COLORS.costText
-  ctx.fillText(`$${totalCost.toFixed(3)}`, panelX + COST_PANEL.contentPadding, y)
+  ctx.fillText(formatCostUsd(totalCost), panelX + COST_PANEL.contentPadding, y)
 
   ctx.font = FONT.mono(10 + fs)
   ctx.fillStyle = COLORS.textMuted
-  ctx.fillText(`${formatTokens(totalTokens)} tokens`, panelX + COST_PANEL.contentPadding + ctx.measureText(`$${totalCost.toFixed(3)}`).width + 14, y + 2)
+  ctx.fillText(`${formatTokens(totalTokens)} tokens`, panelX + COST_PANEL.contentPadding + ctx.measureText(formatCostUsd(totalCost)).width + 14, y + 2)
 
   y += headerH
 
@@ -355,7 +356,7 @@ export function drawCostSummaryPanel(
     drawStatusGlyph(ctx, status, barLeft + 4, rowMid, narrow ? 4 : 3, performance.now())
 
     ctx.font = FONT.mono(rowFont)
-    const costText = `$${a.cost.toFixed(3)}`
+    const costText = formatCostUsd(a.cost)
     const costW = ctx.measureText(costText).width
     const tag = modelTag(model)
     ctx.font = FONT.mono(rowFont - 1, 'bold')
@@ -421,7 +422,7 @@ export function drawCostSummaryPanel(
       // Cost
       ctx.textAlign = 'right'
       ctx.fillStyle = COLORS.costTextDim
-      ctx.fillText(`$${t.cost.toFixed(3)}`, panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset, rowMid)
+      ctx.fillText(formatCostUsd(t.cost), panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset, rowMid)
       ctx.textBaseline = 'top'
 
       y += lineH
