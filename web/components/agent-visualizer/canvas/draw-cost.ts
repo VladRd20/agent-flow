@@ -1,3 +1,4 @@
+import type { UsageLedger } from '@/hooks/simulation/usage-ledger'
 import { Agent, ToolCallNode, NODE } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { FONT, COST_RATE, MODEL_FAMILY_COST, COST_DRAW, COST_PANEL, MIN_VISIBLE_OPACITY } from '@/lib/canvas-constants'
@@ -142,36 +143,34 @@ export function clearCostCardInset(): void {
   setRightInset(COST_CARD_KEY, 0)
 }
 
-export function drawCostSummaryPanel(
-  ctx: CanvasRenderingContext2D,
-  agents: Map<string, Agent>,
-  toolCalls: Map<string, ToolCallNode>,
-) {
-  const agentList = Array.from(agents.values()).filter(a => a.tokensUsed > 0)
-  if (agentList.length === 0) { clearCostCardInset(); return }
-
-  // Compute totals
-  const totalTokens = agentList.reduce((s, a) => s + a.tokensUsed, 0)
-
-  // Per-agent breakdown sorted by cost desc
-  const agentBreakdown = agentList
-    .map(a => ({ name: a.name, isMain: a.isMain, tokens: a.tokensUsed, cost: agentCost(a.tokensUsed, a.model) }))
+/** Per-agent and per-tool cost rows derived from the cumulative ledger (survives agent/tool removal). */
+export function ledgerBreakdown(ledger: UsageLedger) {
+  const agentBreakdown = Array.from(ledger.agents.values())
+    .map(a => ({ name: a.name, isMain: a.isMain, tokens: a.tokens, cost: agentCost(a.tokens, a.model) }))
     .sort((a, b) => b.cost - a.cost)
+  const totalTokens = agentBreakdown.reduce((s, a) => s + a.tokens, 0)
   const totalCost = agentBreakdown.reduce((s, a) => s + a.cost, 0)
 
   // Per-tool-type breakdown, costed at the owning agent's model rate
   const toolBreakdown = new Map<string, { tokens: number; cost: number }>()
-  for (const [, tc] of toolCalls) {
-    if (tc.tokenCost) {
-      const entry = toolBreakdown.get(tc.toolName) || { tokens: 0, cost: 0 }
-      entry.tokens += tc.tokenCost
-      entry.cost += agentCost(tc.tokenCost, agents.get(tc.agentId)?.model)
-      toolBreakdown.set(tc.toolName, entry)
-    }
+  for (const t of ledger.tools.values()) {
+    const entry = toolBreakdown.get(t.toolName) || { tokens: 0, cost: 0 }
+    entry.tokens += t.tokens
+    entry.cost += agentCost(t.tokens, ledger.agents.get(t.agentId)?.model)
+    toolBreakdown.set(t.toolName, entry)
   }
   const toolList = Array.from(toolBreakdown.entries())
     .map(([name, { tokens, cost }]) => ({ name, tokens, cost }))
     .sort((a, b) => b.cost - a.cost)
+  return { agentBreakdown, totalTokens, totalCost, toolList }
+}
+
+export function drawCostSummaryPanel(
+  ctx: CanvasRenderingContext2D,
+  ledger: UsageLedger,
+) {
+  const { agentBreakdown, totalTokens, totalCost, toolList } = ledgerBreakdown(ledger)
+  if (agentBreakdown.length === 0) { clearCostCardInset(); return }
 
   // Panel dimensions — positioned top-right
   // Viewport width comes from the per-frame overlay layout (explicit dpr-independent CSS px);

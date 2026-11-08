@@ -481,7 +481,7 @@ export function AgentCanvas({
 
       ctx.restore()
 
-      if (showCostOverlay) drawCostSummaryPanel(ctx, agents, toolCalls)
+      if (showCostOverlay) drawCostSummaryPanel(ctx, simulationRef.current.usageLedger)
       else clearCostCardInset()
       if (bloomRef.current) bloomRef.current.apply(canvas, ctx)
       if (PERF_STATS_ENABLED) frameDriver.recordTaskMs('draw', performance.now() - drawT0)

@@ -1,3 +1,4 @@
+import { recordUsage } from './usage-ledger'
 import type { SimulationState } from './types'
 import {
   TOOL_MIN_DISPLAY_S, TOOL_MAX_RUNNING_S,
@@ -210,6 +211,11 @@ export function computeNextFrame(prev: SimulationState, deltaTime: number, newTi
         cleanupFaded(newAgentsRaw, newToolCallsRaw, newEdgesRaw, currentState.agents, currentState.toolCalls,
           currentState.hiddenAgents, newTime)
 
+      // Belt and braces: snapshot usage of anything cleanupFaded just removed so totals never shrink
+      const usageLedger = (newAgents.size !== currentState.agents.size || newToolCalls.size !== currentState.toolCalls.size)
+        ? recordUsage(currentState.usageLedger, currentState.agents, currentState.toolCalls)
+        : currentState.usageLedger
+
       const newDiscoveries = animateDiscoveries(currentState.discoveries, deltaTime, newTime)
       const newParticles = animateParticles(currentState.particles, deltaTime, currentState.speed)
 
@@ -217,7 +223,7 @@ export function computeNextFrame(prev: SimulationState, deltaTime: number, newTi
       if (options.useMockData && currentState.eventIndex >= options.mockScenarioLength && newTime > options.mockScenarioEndTime + MOCK_END_BUFFER_S) {
         return {
           ...currentState, currentTime: newTime, eventIndex: currentState.eventIndex,
-          agents: newAgents, toolCalls: newToolCalls, hiddenAgents,
+          agents: newAgents, toolCalls: newToolCalls, hiddenAgents, usageLedger,
           particles: newParticles, edges: filteredEdges,
           discoveries: newDiscoveries,
           maxTimeReached: maxT,
@@ -227,7 +233,7 @@ export function computeNextFrame(prev: SimulationState, deltaTime: number, newTi
 
       return {
         ...currentState, currentTime: newTime, eventIndex: currentState.eventIndex,
-        agents: newAgents, toolCalls: newToolCalls, hiddenAgents,
+        agents: newAgents, toolCalls: newToolCalls, hiddenAgents, usageLedger,
         particles: newParticles, edges: filteredEdges,
         discoveries: newDiscoveries,
         maxTimeReached: maxT,

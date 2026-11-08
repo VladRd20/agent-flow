@@ -65,3 +65,51 @@ export function firstIndexAfter(buf: ReadonlyArray<SeqEvent>, after: number): nu
   }
   return lo
 }
+
+export interface TrimEvent extends SeqEvent {
+  type: string
+  payload?: Record<string, unknown>
+}
+
+/** Event types whose latest occurrence per agent is needed to rebuild the graph and usage ledger. */
+const STRUCTURAL_KEY_FIELD: Record<string, string> = {
+  agent_spawn: 'name',
+  agent_complete: 'name',
+  model_detected: 'agent',
+  context_update: 'agent',
+}
+
+/**
+ * Trim a seq-ordered replay buffer IN PLACE down to `max` events (no-op when
+ * already within `max`). Instead of dropping the oldest events blindly, the
+ * latest agent_spawn / agent_complete / model_detected / context_update per agent
+ * are kept, so a client that connects after trimming still sees every agent and
+ * its usage; older transient events (tool calls, messages, superseded updates)
+ * are dropped oldest-first. Order (and so seq ordering) is preserved. If the
+ * structural events alone exceed `max`, the oldest of them go too.
+ */
+export function trimEventBuffer(buf: TrimEvent[], max: number): void {
+  const excess = buf.length - max
+  if (excess <= 0) return
+  const keep = new Set<number>()
+  const seen = new Set<string>()
+  for (let i = buf.length - 1; i >= 0; i--) {
+    const field = STRUCTURAL_KEY_FIELD[buf[i].type]
+    if (!field) continue
+    const name = buf[i].payload?.[field]
+    if (typeof name !== 'string') continue
+    const key = `${buf[i].type}\0${name}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    keep.add(i)
+  }
+  let toDrop = excess
+  let w = 0
+  for (let r = 0; r < buf.length; r++) {
+    if (toDrop > 0 && !keep.has(r)) { toDrop--; continue }
+    buf[w++] = buf[r]
+  }
+  buf.length = w
+  // Structural events alone exceed the cap: fall back to dropping the oldest.
+  if (buf.length > max) buf.splice(0, buf.length - max)
+}

@@ -10,7 +10,7 @@ import * as os from 'os'
 
 import { HookServer } from '../extension/src/hook-server'
 import { AgentEvent, SessionInfo, WatchedSession } from '../extension/src/protocol'
-import { SeqAssigner, resolveSince, firstIndexAfter } from './relay-seq'
+import { SeqAssigner, resolveSince, firstIndexAfter, trimEventBuffer } from './relay-seq'
 import { buildContextPayload } from '../extension/src/context-usage'
 import { TranscriptParser } from '../extension/src/transcript-parser'
 import { readNewFileLines, foldPathCase } from '../extension/src/fs-utils'
@@ -104,6 +104,8 @@ function broadcast(data: string) {
 
 // ─── Event buffering ────────────────────────────────────────────────────────
 
+/** Extra events allowed above MAX_EVENT_BUFFER before a trim pass runs. */
+const EVENT_BUFFER_TRIM_SLACK = 2000
 const eventBuffer = new Map<string, AgentEvent[]>()
 
 function broadcastEvent(event: AgentEvent) {
@@ -129,7 +131,8 @@ function broadcastEvent(event: AgentEvent) {
       eventBuffer.set(event.sessionId, buf)
     }
     buf.push(event)
-    if (buf.length > MAX_EVENT_BUFFER) buf.splice(0, buf.length - MAX_EVENT_BUFFER)
+    // Amortised: trim in batches, keeping structural events (see trimEventBuffer)
+    if (buf.length > MAX_EVENT_BUFFER + EVENT_BUFFER_TRIM_SLACK) trimEventBuffer(buf, MAX_EVENT_BUFFER)
   }
 
   broadcast(JSON.stringify({ type: 'agent-event', event }))

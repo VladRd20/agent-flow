@@ -1,3 +1,4 @@
+import { recordUsage } from './usage-ledger'
 import {
   Agent,
   ToolCallNode,
@@ -123,6 +124,8 @@ function withCollections(prev: SimulationState, state: MutableEventState): Simul
     timelineEntries: mapsEqual(prev.timelineEntries, state.timelineEntries) ? prev.timelineEntries : state.timelineEntries,
     conversations: mapsEqual(prev.conversations, state.conversations) ? prev.conversations : state.conversations,
     hiddenAgents: mapsEqual(prev.hiddenAgents, state.hiddenAgents) ? prev.hiddenAgents : state.hiddenAgents,
+    // Record before anything can prune: totals only ever grow (see usage-ledger.ts)
+    usageLedger: recordUsage(prev.usageLedger, state.agents, state.toolCalls),
   }
 }
 

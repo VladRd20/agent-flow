@@ -8,6 +8,7 @@ import type {
   TimelineEntry,
   SimulationEvent,
 } from '@/lib/agent-types'
+import { createUsageLedger, type UsageLedger } from './usage-ledger'
 import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force'
 
 export interface SimulationState {
@@ -21,6 +22,8 @@ export interface SimulationState {
   conversations: Map<string, ConversationMessage[]>
   /** Finished sub-agents kept out of the graph until resumed or expired (see hidden-agents.ts) */
   hiddenAgents: Map<string, { agent: Agent; hiddenAt: number }>
+  /** Cumulative usage that survives agent/tool removal (see usage-ledger.ts) */
+  usageLedger: UsageLedger
   currentTime: number
   isPlaying: boolean
   speed: number
@@ -42,6 +45,7 @@ export function createEmptyState(overrides?: Partial<SimulationState>): Simulati
     timelineEntries: new Map(),
     conversations: new Map(),
     hiddenAgents: new Map(),
+    usageLedger: createUsageLedger(),
     currentTime: 0,
     isPlaying: false,
     speed: 1,

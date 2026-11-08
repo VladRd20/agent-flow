@@ -13,6 +13,7 @@ import { TOOL_CARD_W, TOOL_CARD_H, FORCE, TOOL_SLOT, BUBBLE_VISIBLE_S, MODEL_FAM
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
 
 import type { SimulationState, ForceNode, ForceLink, UseAgentSimulationOptions } from './simulation/types'
+import { recordUsage } from './simulation/usage-ledger'
 import { createEmptyState, MAX_EVENT_LOG } from './simulation/types'
 import { processEvent, foldEvents, VISUAL_LIFETIME_S, HISTORICAL_BATCH_MIN, type ProcessEventContext } from './simulation/process-event'
 import { computeNextFrame } from './simulation/animate'
@@ -487,6 +488,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       agents, edges, timelineEntries, conversations,
       eventLog, eventIndex: eventLog.length,
     }
+    // A real reset: start a fresh ledger, seeded with the agents that stay on screen
+    next.usageLedger = recordUsage(next.usageLedger, agents)
     commitState(next)
     setTimeout(() => syncForceSimulation(next.agents, next.edges), 0)
   }, [syncForceSimulation, commitState])
@@ -595,7 +598,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // Canvas reads frameRef directly for 60fps rendering
     frameRef,
     // UI components use React state (updated only on events/user actions)
-    agents: state.agents, hiddenAgents: state.hiddenAgents, toolCalls: state.toolCalls,
+    agents: state.agents, hiddenAgents: state.hiddenAgents, usageLedger: state.usageLedger, toolCalls: state.toolCalls,
     particles: state.particles, edges: state.edges,
     discoveries: state.discoveries,
     fileAttention: state.fileAttention,

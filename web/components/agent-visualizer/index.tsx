@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from "react"
 import { useAgentSimulation } from "@/hooks/use-agent-simulation"
+import { ledgerTotalTokens } from "@/hooks/simulation/usage-ledger"
 import { useVSCodeBridge } from "@/hooks/use-vscode-bridge"
 import { useSelectionState } from "@/hooks/use-selection-state"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
@@ -43,6 +44,7 @@ export function AgentVisualizer() {
     frameRef,
     agents: liveAgents,
     hiddenAgents,
+    usageLedger,
     edges: liveEdges,
     toolCalls,
     discoveries,
@@ -271,11 +273,8 @@ export function AgentVisualizer() {
 
   useKeyboardShortcuts(keyboardActions)
 
-  const totalTokens = useMemo(() => {
-    let sum = 0
-    for (const a of liveAgents.values()) sum += a.tokensUsed
-    return sum
-  }, [liveAgents])
+  // Cumulative: includes sub-agents that have faded out or expired from the graph
+  const totalTokens = useMemo(() => ledgerTotalTokens(usageLedger), [usageLedger])
 
   const selectedAgent = selection.selectedAgentId ? agents.get(selection.selectedAgentId) : null
   // On phones, sheets (files / transcript / timeline / agent detail+chat) take over the bottom,
