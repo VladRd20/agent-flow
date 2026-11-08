@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, type MutableRefObject } from 'react'
 import { Agent, ToolCallNode, Discovery, ANIM } from '@/lib/agent-types'
-import { getBottomInset, getTopInset, getRightInset } from '@/lib/layout-insets'
+import { getBottomInset, getTopInset, getRightInset, getLeftInset } from '@/lib/layout-insets'
 import { CAMERA } from '@/lib/canvas-constants'
 import { computeFitTransform as computeFitTransformPure, createFitCache, type Transform } from '@/lib/compute-fit-transform'
 
@@ -53,7 +53,7 @@ export function useCanvasCamera({
   const computeFitTransform = useCallback((): Transform | null => {
     const { agents, toolCalls, discoveries, dimensions, selectedAgentId } = drawPropsRef.current
     return computeFitTransformPure(
-      { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime: simTimeRef.current ?? 0, bottomInset: getBottomInset(), topInset: getTopInset(), rightInset: getRightInset() },
+      { agents, toolCalls, discoveries, dimensions, selectedAgentId, simTime: simTimeRef.current ?? 0, bottomInset: getBottomInset(), topInset: getTopInset(), rightInset: getRightInset(), leftInset: getLeftInset() },
       fitCacheRef.current,
     )
   }, [drawPropsRef, simTimeRef])

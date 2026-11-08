@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useCallback, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { Z } from "@/lib/agent-types"
 import { COLORS } from "@/lib/colors"
 import { CostChip, CostLiveSummary } from "./cost-chip"
@@ -230,6 +230,13 @@ function MobileTopBar({
   const menuBottom = menuOpen ? getBottomInset() : 0
   useClickOutside(menuRef, closeMenu)
   useEscapeKey(closeMenu, menuOpen)
+  // While the menu popover is open the message pill below it steps out of hit-testing (see .af-feed-pill in globals.css)
+  useEffect(() => {
+    const root = document.documentElement
+    if (menuOpen) root.setAttribute('data-af-menu-open', '')
+    else root.removeAttribute('data-af-menu-open')
+    return () => root.removeAttribute('data-af-menu-open')
+  }, [menuOpen])
   const barRef = useRef<HTMLDivElement>(null)
   useTopChromeInset('top-bar', barRef)
 

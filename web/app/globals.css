@@ -408,8 +408,8 @@ button:focus-visible,
   -webkit-backdrop-filter: none;
 }
 .af-mh-chat {
-  max-height: min(70vh, calc(100vh - var(--af-sheet-top) - var(--af-detail-h)));
-  max-height: min(70dvh, calc(100dvh - var(--af-sheet-top) - var(--af-detail-h)));
+  max-height: min(55vh, calc(100vh - var(--af-sheet-top) - var(--af-detail-h)));
+  max-height: min(55dvh, calc(100dvh - var(--af-sheet-top) - var(--af-detail-h)));
 }
 .af-mh-feed {
   max-height: min(60vh, calc(100vh - var(--af-feed-top) - var(--af-above-bar)));
@@ -438,4 +438,10 @@ button:focus-visible,
 .af-mh-timeline {
   max-height: 50vh;
   max-height: 50dvh;
+}
+
+/* Phone menu open: the message pill underneath is hidden and inert, not just covered. */
+html[data-af-menu-open] .af-feed-pill {
+  visibility: hidden;
+  pointer-events: none;
 }

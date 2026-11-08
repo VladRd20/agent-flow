@@ -64,13 +64,13 @@ function AgentChatPanelImpl({
       >
         <PanelHeader onClose={onClose} className="mb-2 flex-shrink-0">
           <div
-            className="w-1.5 h-1.5 rounded-full"
+            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
             style={{ background: stateColor, boxShadow: `0 0 6px ${stateColor}` }}
           />
-          <span className="text-[10px] font-mono tracking-wider" style={{ color: COLORS.textPrimary }}>
+          <span className="text-[10px] font-mono tracking-wider truncate min-w-0" title={agentName} style={{ color: COLORS.textPrimary }}>
             {agentName.toUpperCase()}
           </span>
-          <span className="text-[9px] font-mono capitalize" style={{ color: stateColor + '90' }}>
+          <span className="text-[9px] font-mono capitalize flex-shrink-0" style={{ color: stateColor + '90' }}>
             {agentState}
           </span>
         </PanelHeader>

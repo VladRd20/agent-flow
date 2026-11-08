@@ -59,6 +59,8 @@ export interface FitInput {
   topInset?: number
   /** Pixels at the right of the viewport covered by chrome (wide-layout cost card); fit centers left of it */
   rightInset?: number
+  /** Pixels at the left of the viewport covered by floating chrome (phone view controls); fit centers right of it */
+  leftInset?: number
 }
 
 export interface FitCache {
@@ -71,11 +73,12 @@ export interface FitCache {
   bottomInset: number
   topInset: number
   rightInset: number
+  leftInset: number
   result: Transform | null
 }
 
 export function createFitCache(): FitCache {
-  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, bottomInset: 0, topInset: 0, rightInset: 0, result: null }
+  return { agents: null, toolCalls: null, discoveries: null, selectedAgentId: null, width: -1, height: -1, bottomInset: 0, topInset: 0, rightInset: 0, leftInset: 0, result: null }
 }
 
 /** Collect an agent and all its descendants (BFS) */
@@ -105,6 +108,7 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const bottomInset = Math.max(0, input.bottomInset ?? 0)
   const topInset = Math.max(0, input.topInset ?? 0)
   const rightInset = Math.max(0, input.rightInset ?? 0)
+  const leftInset = Math.max(0, input.leftInset ?? 0)
   // Collapsed/hidden container (ResizeObserver can report 0 transiently): no fit
   if (agents.size === 0 || !(dimensions.width > 0) || !(dimensions.height > 0)) return null
 
@@ -120,7 +124,8 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
     && cache.height === dimensions.height
     && cache.bottomInset === bottomInset
     && cache.topInset === topInset
-    && cache.rightInset === rightInset) {
+    && cache.rightInset === rightInset
+    && cache.leftInset === leftInset) {
     return cache.result
   }
 
@@ -189,6 +194,7 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   cache.bottomInset = bottomInset
   cache.topInset = topInset
   cache.rightInset = rightInset
+  cache.leftInset = leftInset
 
   if (minX === Infinity) {
     cache.result = null
@@ -217,7 +223,9 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   // Reserve the right-hand overlay, but never more than 40% of the width.
   // Name plates hang half their width beside a node, so keep a little extra clear of the chrome.
   const right = Math.min(rightInset > 0 ? rightInset + 56 : 0, dimensions.width * 0.4)
-  const availW = dimensions.width - right
+  // Same for the left-hand control buttons (plus room for a name plate), capped at 30%.
+  const left = Math.min(leftInset > 0 ? leftInset + 24 : 0, dimensions.width * 0.3)
+  const availW = dimensions.width - right - left
   const innerW = Math.max(availW - padX * 2, availW * 0.5)
   const innerH = Math.max(availH - padTop - padBottom, availH * 0.5)
   const natural = Math.min(innerW / boundsW, innerH / boundsH, FIT_MAX_SCALE)
@@ -230,7 +238,7 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const scale = clamped ? minScale : natural
   const bandTop = availH - padTop - padBottom >= availH * 0.5 ? top + padTop : top + (availH - innerH) / 2
   const result = {
-    x: availW / 2 - centerX * scale,
+    x: left + availW / 2 - centerX * scale,
     y: clamped ? top + padTop - minY * scale : bandTop + innerH / 2 - centerY * scale,
     scale,
   }

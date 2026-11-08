@@ -9,6 +9,8 @@ const topInsets = new Map<string, number>()
 let topInsetPx = 0
 const rightInsets = new Map<string, number>()
 let rightInsetPx = 0
+const leftInsets = new Map<string, number>()
+let leftInsetPx = 0
 
 /** Pixels at the bottom of the viewport covered by chrome (control bar). */
 export function setBottomInset(px: number): void {
@@ -63,4 +65,23 @@ export function setRightInset(key: string, px: number): void {
 
 export function getRightInset(): number {
   return rightInsetPx
+}
+
+/**
+ * Pixels at the left of the viewport covered by floating chrome (phone view-control
+ * buttons). Keyed like the others; the inset is the widest among publishers.
+ */
+export function setLeftInset(key: string, px: number): void {
+  const v = Math.max(0, Math.round(px))
+  if (v > 0) leftInsets.set(key, v)
+  else leftInsets.delete(key)
+  let max = 0
+  for (const n of leftInsets.values()) if (n > max) max = n
+  if (max === leftInsetPx) return
+  leftInsetPx = max
+  wakeFrames()
+}
+
+export function getLeftInset(): number {
+  return leftInsetPx
 }

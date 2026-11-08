@@ -217,7 +217,7 @@ function MessageFeedPanelImpl({
         type="button"
         aria-expanded={false}
         aria-label={`Show messages. Latest from ${agentName}`}
-        className="af-hit absolute text-left cursor-pointer transition-all hover:scale-[1.02]"
+        className="af-hit af-feed-pill absolute text-left cursor-pointer transition-all hover:scale-[1.02]"
         style={{
           top: 'var(--af-feed-top)',
           left: 'var(--af-left)',

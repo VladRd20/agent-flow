@@ -93,7 +93,7 @@ export function SessionTabs({
     <div
       ref={scrollerRef}
       className={`min-w-0 overflow-x-auto overflow-y-hidden scrollbar-hide snap-x overscroll-x-contain ${fadeClass}`}
-      style={{ touchAction: 'pan-x', scrollPaddingInline: 12 }}
+      style={{ touchAction: 'pan-x', scrollPaddingInline: isMobile ? 0 : 12 }}
     >
       <div className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
       <div role="tablist" aria-label="Sessions" onKeyDown={onTabKeyDown} className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
@@ -133,7 +133,10 @@ export function SessionTabs({
                   <rect x="0" y="0" width="4" height="4" rx="0.8" /><rect x="6" y="0" width="4" height="4" rx="0.8" />
                   <rect x="0" y="6" width="4" height="4" rx="0.8" /><rect x="6" y="6" width="4" height="4" rx="0.8" />
                 </svg>
-                <span>{allTabLabel(liveCount, totalCount)}</span>
+                <span className="max-[420px]:hidden">{allTabLabel(liveCount, totalCount)}</span>
+                <span className="hidden max-[420px]:inline" aria-hidden="true">
+                  {liveCount > 0 ? `All · ${liveCount}/${totalCount}` : `All · ${totalCount}`}
+                </span>
               </button>
             </div>
           )
@@ -152,7 +155,7 @@ export function SessionTabs({
             <div
               key={session.id}
               ref={(el) => setTabRef(session.id, el)}
-              className="group snap-start rounded transition-all flex items-center flex-shrink-0"
+              className={`group snap-start rounded transition-all flex items-center flex-shrink-0 ${isMobile ? 'min-w-28' : ''}`}
               style={{
                 background: isSelected ? COLORS.tabSelectedBg : COLORS.tabInactiveBg,
                 border: `1px solid ${isSelected ? COLORS.tabSelectedBorder : COLORS.tabInactiveBorder}`,
@@ -178,7 +181,7 @@ export function SessionTabs({
                     animation: hasActivity && !isSelected ? 'pulse 1.5s infinite' : 'none',
                   }}
                 />
-                <span className="truncate max-w-36 md:max-w-64">{session.label}</span>
+                <span className="truncate max-w-28 min-[420px]:max-w-36 md:max-w-64">{session.label}</span>
               </button>
               <button
                 type="button"

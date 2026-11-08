@@ -111,3 +111,15 @@ test('computeFitTransform caps the right inset at 40% of the width', () => {
   const atCap = computeFitTransform({ ...input, rightInset: 200 }, createFitCache())!
   assert.deepEqual(capped, atCap)
 })
+
+test('computeFitTransform keeps content right of left-hand floating controls and caps the inset at 30%', () => {
+  const cache = createFitCache()
+  const input = baseInput({ dimensions: { width: 400, height: 600 } })
+  const plain = computeFitTransform(input, cache)!
+  const inset = computeFitTransform({ ...input, leftInset: 68 }, cache)!
+  assert.ok(inset.x > plain.x, 'content shifts right of the controls')
+  assert.ok(inset.scale <= plain.scale)
+  const capped = computeFitTransform({ ...input, leftInset: 900 }, createFitCache())!
+  const atCap = computeFitTransform({ ...input, leftInset: 96 }, createFitCache())!
+  assert.deepEqual(capped, atCap)
+})

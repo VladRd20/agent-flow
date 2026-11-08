@@ -1,9 +1,10 @@
 "use client"
 
-import { memo } from "react"
+import { memo, useEffect, useRef } from "react"
 import { Z } from "@/lib/agent-types"
 import { COLORS } from "@/lib/colors"
 import { useIsMobile } from "@/hooks/use-is-mobile"
+import { setLeftInset } from "@/lib/layout-insets"
 
 interface ViewControlsProps {
   /** Hide while a mobile sheet is open (keeps state, drops out of layout/hit-testing) */
@@ -57,8 +58,28 @@ export const ViewControls = memo(function ViewControls({
 }: ViewControlsProps) {
   const isMobile = useIsMobile()
   const size = isMobile ? 'w-11 h-11' : 'w-9 h-9'
+  const ref = useRef<HTMLDivElement>(null)
+  // Phones: publish the right edge of the buttons so fit-to-view keeps cards out from under them
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !isMobile || hidden) { setLeftInset('view-controls', 0); return }
+    const publish = () => {
+      const r = el.getBoundingClientRect()
+      setLeftInset('view-controls', r.width > 0 ? r.right + 8 : 0)
+    }
+    publish()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(publish) : null
+    ro?.observe(el)
+    window.addEventListener('resize', publish)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', publish)
+      setLeftInset('view-controls', 0)
+    }
+  }, [isMobile, hidden])
   return (
     <div
+      ref={ref}
       role="group"
       aria-label="View controls"
       className="absolute flex flex-col gap-1 [@media(max-height:500px)]:flex-row"

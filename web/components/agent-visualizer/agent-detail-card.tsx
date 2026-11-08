@@ -107,8 +107,8 @@ export function AgentDetailCard({
           className="w-2 h-2 rounded-full"
           style={{ background: stateColor, boxShadow: `0 0 8px ${stateColor}` }}
         />
-        <div className="flex flex-col">
-          <span className="text-xs font-mono" style={{ color: COLORS.textPrimary }}>
+        <div className="flex flex-col min-w-0">
+          <span className="text-xs font-mono truncate" title={agent.name} style={{ color: COLORS.textPrimary }}>
             {agent.name}
           </span>
           {agent.model && (
@@ -131,7 +131,7 @@ export function AgentDetailCard({
       </div>
 
       {/* Stats row */}
-      <div className="flex gap-3 mb-3 text-[10px] font-mono" style={{ color: COLORS.textDim }}>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3 text-[10px] font-mono" style={{ color: COLORS.textDim }}>
         <span>{agent.toolCalls} tools</span>
         <span>{agent.timeAlive.toFixed(1)}s alive</span>
         <span className="capitalize" style={{ color: stateColor }}>{agent.state}</span>
