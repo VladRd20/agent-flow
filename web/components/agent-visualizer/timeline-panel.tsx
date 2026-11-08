@@ -249,7 +249,8 @@ function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: T
   return (
     <SlidingPanel
       visible={visible}
-      position={{ bottom: 'var(--af-above-bar)', left: 'var(--af-edge-left)', right: 'var(--af-edge-right)' }}
+      // Symmetric 48px extra gutter keeps the panel clear of the bottom-left view-controls column (36px wide) on narrow desktops
+      position={{ bottom: 'var(--af-above-bar)', left: 'calc(var(--af-edge-left) + 48px)', right: 'calc(var(--af-edge-right) + 48px)' }}
       axis="Y"
       zIndex={Z.sidePanel}
       mobileZIndex={Z.sheet}
