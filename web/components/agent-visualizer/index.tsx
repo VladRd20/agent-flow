@@ -364,7 +364,11 @@ export function AgentVisualizer() {
 
   return (
     <OpenFileProvider value={bridge.isVSCode ? openFile : null}>
-    <div className="af-root relative overflow-hidden" style={{ background: COLORS.void }}>
+    <div
+      className="af-root relative overflow-hidden"
+      style={{ background: COLORS.void }}
+      data-right-panel={showTranscript ? 'transcript' : showFileAttention ? 'files' : undefined}
+    >
       {/* Empty state when no demo and no live data */}
       {isEmpty && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
@@ -398,14 +402,17 @@ export function AgentVisualizer() {
         ariaLabel={canvasAriaLabel}
       />
 
-      {/* Message feed panel (top-left) */}
-      <MessageFeedPanel
-        conversations={conversations}
-        agents={agents}
-        onAgentClick={selection.handleAgentClick}
-        selectedAgentId={selection.selectedAgentId}
-        sessionLabels={sessionLabels}
-      />
+      {/* Message feed panel (top-left). On phones the files/transcript sheets start at the
+          same height (and the agent chat sheet can reach it), so the pill steps aside instead of sitting half-hidden under them. */}
+      <div className={isMobile && (showFileAttention || showTranscript || !!selectedAgent) ? 'hidden' : 'contents'}>
+        <MessageFeedPanel
+          conversations={conversations}
+          agents={agents}
+          onAgentClick={selection.handleAgentClick}
+          selectedAgentId={selection.selectedAgentId}
+          sessionLabels={sessionLabels}
+        />
+      </div>
 
       {/* Agent detail card (floating, tethered to node) */}
       {selectedAgent && selection.selectedAgentWorldPos && (

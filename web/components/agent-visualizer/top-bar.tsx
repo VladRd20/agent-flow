@@ -288,6 +288,10 @@ function MobileTopBar({
               marginTop: 4,
               minWidth: 200,
               maxWidth: 'calc(100vw - 16px)',
+              // short (landscape) screens: scroll the menu instead of running off the bottom
+              maxHeight: 'calc(100vh - var(--af-sheet-top) - 8px)',
+              overflowY: 'auto',
+              overscrollBehavior: 'contain',
               background: 'rgba(10, 15, 30, 0.92)',
               backdropFilter: 'blur(8px)',
               WebkitBackdropFilter: 'blur(8px)',
@@ -295,9 +299,9 @@ function MobileTopBar({
               boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
             }}
           >
-            <div className="flex items-center justify-between px-1 py-1" style={{ color: COLORS.textMuted }}>
+            <div className="flex items-center justify-between gap-3 px-1 py-1" style={{ color: COLORS.textMuted }}>
               <ConnectionIndicator status={connectionStatus} />
-              <span>
+              <span className="whitespace-nowrap">
                 {agentCount} agents
                 {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
               </span>

@@ -129,7 +129,7 @@ export function drawCostLabels(
 }
 
 const COST_CARD_KEY = 'cost-card'
-const COST_CARD_GAP = 8
+const COST_CARD_GAP = 16
 
 /** Tell fit-to-view what the card covers: a top band on phones, a right column on wide layouts. */
 function publishCostCardInset(narrow: boolean, bottom: number, rightWidth: number): void {

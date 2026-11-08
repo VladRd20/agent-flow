@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CARD, Z, type AgentState } from '@/lib/agent-types'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 import { COLORS, getStateColor } from '@/lib/colors'
@@ -34,7 +34,9 @@ export function AgentDetailCard({
   const stateColor = getStateColor(agent.state)
 
   const isMobile = useIsMobile()
-  const cardRef = useRef<HTMLDivElement>(null)
+  // State (not a ref object): GlassCard mounts its element a tick after this component,
+  // so the effect below must re-run once the element exists or --af-detail-h stays 0.
+  const [cardEl, setCardEl] = useState<HTMLDivElement | null>(null)
 
   // Track the viewport height so the card re-centers on resize / rotation
   const [viewportH, setViewportH] = useState(() => typeof window !== 'undefined' ? window.innerHeight : 600)
@@ -54,7 +56,7 @@ export function AgentDetailCard({
   // Mobile: publish the sheet's height so the chat sheet can stack above it
   useEffect(() => {
     const root = document.documentElement
-    const el = cardRef.current
+    const el = cardEl
     if (!isMobile || !el) {
       root.style.setProperty('--af-detail-h', '0px')
       return
@@ -67,7 +69,7 @@ export function AgentDetailCard({
       ro?.disconnect()
       root.style.setProperty('--af-detail-h', '0px')
     }
-  }, [isMobile, agent.currentTool])
+  }, [isMobile, cardEl, agent.currentTool])
 
   // Desktop: fixed position, middle-left of the screen (below message feed panel)
   const left = CARD.margin
@@ -90,7 +92,7 @@ export function AgentDetailCard({
   return (
     <GlassCard
       visible={true}
-      innerRef={cardRef}
+      innerRef={setCardEl}
       role="dialog"
       aria-label={`${agent.name} details`}
       className={`agent-detail-card${isMobile ? ' af-sheet af-mh-detail' : ''}`}

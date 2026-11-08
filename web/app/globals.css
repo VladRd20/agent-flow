@@ -290,6 +290,30 @@ input, textarea {
   mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
 }
 
+/* Mouse: compact chips stay compact, but their hit area is at least 24x24 (WCAG 2.5.8). */
+@media (pointer: fine) {
+  .af-hit:not(.absolute):not(.fixed) {
+    position: relative;
+  }
+  .af-hit::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 24px);
+    height: max(100%, 24px);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* Wide layouts: a right-docked panel (transcript 380px / files 260px) would cover part of the
+   centred control bar on mid-size windows, so the bar yields its right edge while one is open.
+   Above 1472px the bar (max 680px, centred) clears the panel on its own. */
+@media (min-width: 769px) and (max-width: 1472px) {
+  .af-root[data-right-panel='transcript'] { --af-edge-right: calc(380px + 16px); }
+  .af-root[data-right-panel='files'] { --af-edge-right: calc(260px + var(--af-right) + 16px); }
+}
+
 /* Touch: extend hit areas to 44x44 without changing the visual size. */
 @media (pointer: coarse) {
   /* Tailwind's `absolute` must win: a floating pill that was made `relative` here dropped

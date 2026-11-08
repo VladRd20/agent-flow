@@ -35,7 +35,7 @@ function AgentChatPanelImpl({
   return (
     <SlidingPanel
       visible={visible}
-      position={{ bottom: 'calc(var(--af-above-bar) - 8px)', right: 'var(--af-right)' }}
+      position={{ bottom: 'calc(var(--af-above-bar) + 4px)', right: 'var(--af-right)' }}
       zIndex={Z.chatPanel}
       mobileZIndex={Z.sheet}
       width={CARD.chat.width}
