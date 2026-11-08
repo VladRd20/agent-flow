@@ -420,7 +420,10 @@ button:focus-visible,
 @media (pointer: coarse) and (max-height: 500px) and (min-aspect-ratio: 3/2) {
   .af-mh-detail {
     right: auto !important;
-    width: 40%;
+    /* Same left gutter as the other panels, never flush at x=0 */
+    left: calc(var(--af-sal) + 8px) !important;
+    width: calc(40% - var(--af-sal) - 8px);
+    border-radius: 12px;
     /* Leave the view-control row (44px + gaps) and the control bar reachable below the card */
     bottom: calc(var(--af-above-bar) + 60px) !important;
     max-height: calc(100vh - var(--af-sheet-top) - var(--af-above-bar) - 60px);
