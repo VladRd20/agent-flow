@@ -125,6 +125,12 @@
 }
 
 /* Glass card effect */
+/* Growing cost / token figures must not jitter the layout */
+.glass-card,
+.af-sheet {
+  font-variant-numeric: tabular-nums;
+}
+
 .glass-card {
   background: rgba(10, 15, 30, 0.7);
   backdrop-filter: blur(20px);

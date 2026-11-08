@@ -8,6 +8,7 @@ import type { ConversationMessage } from '@/hooks/simulation/types'
 import { CloseButton, SlidingPanel, stopPropagationHandlers } from './shared-ui'
 import { useVirtualList } from '@/hooks/use-virtual-list'
 import { useIsMobile } from '@/hooks/use-is-mobile'
+import { useFocusReturn } from '@/hooks/use-focus-return'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ function SessionTranscriptPanelImpl({
   onClose,
 }: TranscriptPanelProps) {
   const isMobile = useIsMobile()
+  useFocusReturn(visible)
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)

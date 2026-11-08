@@ -302,6 +302,20 @@ export function AgentVisualizer() {
   const freeze = useLayoutFreeze({
     stateRef: freezeStateRef, isMobile, agentCount: liveAgents.size, sessionKey: bridge.selectedSessionId,
   })
+  // Phones show one sheet at a time so the graph stays visible: selecting an agent closes the
+  // files / transcript / timeline sheets, and opening one of those deselects the agent.
+  const { clearAgent: clearSelectedAgent } = selection
+  useEffect(() => {
+    if (!isMobile || !selectedAgentIdSel) return
+    setShowFileAttention(false)
+    setShowTranscript(false)
+    setShowTimeline(false)
+  }, [isMobile, selectedAgentIdSel])
+  const panelSheetOpen = showFileAttention || showTranscript || showTimeline
+  useEffect(() => {
+    if (isMobile && panelSheetOpen) clearSelectedAgent()
+  }, [isMobile, panelSheetOpen, clearSelectedAgent])
+
   const [viewCommand, setViewCommand] = useState<ViewCommand | null>(null)
   const sendViewCommand = useCallback((kind: ViewCommand['kind']) => {
     setViewCommand(prev => ({ seq: (prev?.seq ?? 0) + 1, kind }))

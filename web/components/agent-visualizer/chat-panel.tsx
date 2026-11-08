@@ -9,6 +9,7 @@ import type { ConversationMessage } from '@/hooks/simulation/types'
 import { PanelHeader, SlidingPanel, stopPropagationHandlers } from './shared-ui'
 import { useAutoScroll } from '@/hooks/use-auto-scroll'
 import { useIsMobile } from '@/hooks/use-is-mobile'
+import { useFocusReturn } from '@/hooks/use-focus-return'
 
 interface ChatPanelProps {
   visible: boolean
@@ -29,6 +30,7 @@ function AgentChatPanelImpl({
 }: ChatPanelProps) {
   const { ref: logRef } = useAutoScroll(conversation.length, visible)
   const isMobile = useIsMobile()
+  useFocusReturn(visible)
 
   const stateColor = getStateColor(agentState)
 
@@ -40,6 +42,9 @@ function AgentChatPanelImpl({
       mobileZIndex={Z.sheet}
       width={CARD.chat.width}
       label={`${agentName} conversation`}
+      onDismiss={onClose}
+      // No dimming backdrop: the chat sits above the agent detail sheet and the graph stays visible
+      mobileBackdrop={false}
       // Mobile: bottom sheet spanning full width instead of a floating card.
       // Sits above the agent detail sheet (--af-detail-h) when both are open.
       mobilePosition={{ bottom: 'var(--af-detail-h)', left: 0, right: 0 }}

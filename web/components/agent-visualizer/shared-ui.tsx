@@ -27,12 +27,13 @@ interface CloseButtonProps {
 }
 
 export function CloseButton({ onClick, className = '', label = 'Close' }: CloseButtonProps) {
+  const isMobile = useIsMobile()
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={label}
-      className={`af-hit text-xs transition-colors px-1.5 py-0.5 ${className}`}
+      className={`af-hit transition-colors ${isMobile ? 'min-w-11 min-h-11 flex items-center justify-center text-sm' : 'text-xs px-1.5 py-0.5'} ${className}`}
       style={{ color: COLORS.textMuted }}
     >
       ✕
@@ -129,7 +130,7 @@ interface SlidingPanelProps {
   label?: string
   /** Closes the panel on Escape; on mobile also renders a tap-to-close backdrop behind it */
   onDismiss?: () => void
-  /** Render the dimming backdrop on mobile (default true when onDismiss is given) */
+  /** Render the dimming backdrop on mobile (default true when onDismiss is given). Escape works either way. */
   mobileBackdrop?: boolean
 }
 
