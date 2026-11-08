@@ -19,5 +19,11 @@ test('formatCostUsd keeps precision for sub-cent amounts', () => {
 
 test('chip and sentence', () => {
   assert.equal(formatCostChip(0.4123, 1_800_000), '$0.412 · 1.8M tok')
-  assert.equal(costSummarySentence(0.4123, 1_800_000), 'Session cost about $0.412, 1.8M tokens')
+  assert.equal(costSummarySentence(0.4123, 1_800_000), 'Total session cost about $0.412, 1.8M tokens')
+})
+
+test('cost total tooltip states the total never decreases', async () => {
+  const { COST_TOTAL_TOOLTIP } = await import('./cost-summary')
+  assert.match(COST_TOTAL_TOOLTIP, /never decreases/)
+  assert.match(costSummarySentence(1, 1000), /^Total session cost/)
 })

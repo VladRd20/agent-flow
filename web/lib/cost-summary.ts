@@ -18,6 +18,9 @@ export function formatCostChip(cost: number, tokens: number): string {
 }
 
 /** Plain-language summary for the chip's accessible name and the visually-hidden mirror. */
+/** Tooltip for every cost total: the figure is cumulative and monotonic. */
+export const COST_TOTAL_TOOLTIP = 'Total spent this session; never decreases'
+
 export function costSummarySentence(cost: number, tokens: number): string {
-  return `Session cost about ${formatCostUsd(cost)}, ${formatCompactTokens(tokens)} tokens`
+  return `Total session cost about ${formatCostUsd(cost)}, ${formatCompactTokens(tokens)} tokens`
 }

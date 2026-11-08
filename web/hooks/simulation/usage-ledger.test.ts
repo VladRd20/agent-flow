@@ -93,3 +93,16 @@ test('recordUsage returns the same ledger when nothing grew, and a fresh ledger 
   assert.equal(ledgerTotalTokens(createUsageLedger()), 0)
   assert.equal(ledgerTotalTokens(createEmptyState().usageLedger), 0)
 })
+
+test('cost total never decreases across compaction, replay and subagent removal', () => {
+  const st = run(base)
+  let prev = ledgerTotalTokens(st.usageLedger)
+  const steps = [
+    run([{ time: 5, type: 'context_update', payload: { agent: 'orchestrator', tokens: 10 } }], st),
+    run(base.slice(2, 4), st),
+  ]
+  for (const s of steps) {
+    assert.ok(ledgerTotalTokens(s.usageLedger) >= prev)
+    prev = Math.max(prev, ledgerTotalTokens(s.usageLedger))
+  }
+})

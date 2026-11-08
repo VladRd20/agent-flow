@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useState } from "react"
 import { COLORS } from "@/lib/colors"
-import { costSummarySentence, formatCompactTokens, formatCostUsd } from "@/lib/cost-summary"
+import { COST_TOTAL_TOOLTIP, costSummarySentence, formatCompactTokens, formatCostUsd } from "@/lib/cost-summary"
 
 /** Always-visible session cost chip (DOM text, so it can be selected, zoomed and read by AT).
  *  Tapping it toggles the canvas cost card. Figures come from the cumulative usage ledger. */
@@ -20,7 +20,7 @@ export const CostChip = memo(function CostChip({ cost, tokens, active, onToggle,
       onClick={onToggle}
       aria-pressed={active}
       aria-label={`${costSummarySentence(cost, tokens)}. Toggle cost breakdown`}
-      title="Toggle cost breakdown"
+      title={`Total cost. ${COST_TOTAL_TOOLTIP}. Click to toggle breakdown`}
       className="af-hit flex items-center gap-1 rounded px-1.5 py-0.5 whitespace-nowrap"
       style={{
         fontVariantNumeric: 'tabular-nums',
