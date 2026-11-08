@@ -3,6 +3,7 @@
 import { memo, useRef, useEffect, useState } from 'react'
 import { Z, CARD } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
+import { useEscapeKey } from '@/hooks/use-escape-key'
 import { TranscriptMessage } from './transcript-message'
 import type { ConversationMessage } from '@/hooks/simulation/types'
 import { CloseButton, SlidingPanel, stopPropagationHandlers } from './shared-ui'
@@ -36,6 +37,9 @@ function SessionTranscriptPanelImpl({
   const [showSearch, setShowSearch] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Topmost Escape layer while the filter is open: first Escape closes only the search
+  useEscapeKey(() => { setShowSearch(false); setSearchQuery('') }, showSearch)
 
   useEffect(() => {
     if (showSearch) searchRef.current?.focus()
@@ -132,7 +136,6 @@ function SessionTranscriptPanelImpl({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') { setShowSearch(false); setSearchQuery('') }
                 e.stopPropagation()
               }}
               placeholder="Filter messages..."

@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import { CARD, Z, type AgentState } from '@/lib/agent-types'
 import { useIsMobile } from '@/hooks/use-is-mobile'
-import { useEscapeKey } from '@/hooks/use-escape-key'
 import { useFocusReturn } from '@/hooks/use-focus-return'
 import { COLORS, getStateColor } from '@/lib/colors'
 import { formatTokens, formatModelName } from '@/lib/utils'
@@ -36,7 +35,6 @@ export function AgentDetailCard({
   const stateColor = getStateColor(agent.state)
 
   const isMobile = useIsMobile()
-  useEscapeKey(onClose)
   useFocusReturn(true)
   // State (not a ref object): GlassCard mounts its element a tick after this component,
   // so the effect below must re-run once the element exists or --af-detail-h stays 0.

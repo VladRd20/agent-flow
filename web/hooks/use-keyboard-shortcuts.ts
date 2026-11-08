@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { shouldIgnoreShortcut } from "@/lib/keyboard-guard"
+import { escapeStack } from "@/lib/escape-layers"
 
 export function useKeyboardShortcuts(actions: {
   togglePlayPause: () => void
@@ -53,6 +54,7 @@ export function useKeyboardShortcuts(actions: {
           }
           break
         case 'Escape':
+          if (escapeStack.wasHandled(e)) break // a higher layer (search, sheet, menu) took this press
           a.clearSelection()
           a.closeTranscript()
           break

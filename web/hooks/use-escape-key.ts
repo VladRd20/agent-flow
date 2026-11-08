@@ -1,8 +1,14 @@
 import { useEffect, useRef } from 'react'
+import { escapeStack } from '@/lib/escape-layers'
+
+let listening = 0
+const onKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape') escapeStack.dispatch(e)
+}
 
 /**
- * Calls `onEscape` when Escape is pressed while `enabled`. Callback is held in a
- * ref so callers can pass inline functions without resubscribing.
+ * Registers a layered Escape handler while `enabled`: a press runs only the topmost (most recently
+ * enabled) handler. Callback is held in a ref so callers can pass inline functions without resubscribing.
  */
 export function useEscapeKey(onEscape: () => void, enabled = true): void {
   const cbRef = useRef(onEscape)
@@ -10,10 +16,12 @@ export function useEscapeKey(onEscape: () => void, enabled = true): void {
 
   useEffect(() => {
     if (!enabled) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cbRef.current()
+    // Capture phase so layers are resolved before bubble-phase shortcut handlers look at the event
+    if (listening++ === 0) window.addEventListener('keydown', onKeyDown, true)
+    const pop = escapeStack.push(() => cbRef.current())
+    return () => {
+      pop()
+      if (--listening === 0) window.removeEventListener('keydown', onKeyDown, true)
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
   }, [enabled])
 }
