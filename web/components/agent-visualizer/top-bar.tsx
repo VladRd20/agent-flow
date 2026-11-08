@@ -10,6 +10,7 @@ import type { SessionInfo, ConnectionStatus } from "@/lib/bridge-types"
 import { useIsMobile } from "@/hooks/use-is-mobile"
 import { useClickOutside } from "@/hooks/use-click-outside"
 import { useEscapeKey } from "@/hooks/use-escape-key"
+import { getBottomInset } from "@/lib/layout-insets"
 import { useTopChromeInset } from "@/hooks/use-top-chrome-inset"
 
 // ─── Mute/Unmute SVG Icons ───────────────────────────────────────────────────
@@ -228,6 +229,8 @@ function MobileTopBar({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
+  const shortScreen = menuOpen && typeof window !== 'undefined' && window.innerHeight < 500
+  const menuBottom = menuOpen ? getBottomInset() : 0
   useClickOutside(menuRef, closeMenu)
   useEscapeKey(closeMenu, menuOpen)
   const barRef = useRef<HTMLDivElement>(null)
@@ -282,14 +285,16 @@ function MobileTopBar({
           <div
             role="menu"
             aria-label="Panels"
-            className="absolute right-0 rounded flex flex-col gap-1 p-2"
+            className={`absolute right-0 rounded gap-1 p-2 ${shortScreen ? 'grid' : 'flex flex-col'}`}
             style={{
               top: '100%',
               marginTop: 4,
-              minWidth: 200,
+              minWidth: shortScreen ? 340 : 200,
+              // landscape phones: two columns, and never run across the control bar
+              ...(shortScreen ? { gridTemplateColumns: '1fr 1fr' } : null),
               maxWidth: 'calc(100vw - 16px)',
               // short (landscape) screens: scroll the menu instead of running off the bottom
-              maxHeight: 'calc(100vh - var(--af-sheet-top) - 8px)',
+              maxHeight: `calc(100vh - var(--af-sheet-top) - ${menuBottom}px - 8px)`,
               overflowY: 'auto',
               overscrollBehavior: 'contain',
               background: 'rgba(10, 15, 30, 0.92)',
@@ -299,14 +304,14 @@ function MobileTopBar({
               boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
             }}
           >
-            <div className="flex items-center justify-between gap-3 px-1 py-1" style={{ color: COLORS.textMuted }}>
+            <div className="flex items-center justify-between gap-3 px-1 py-1" style={{ color: COLORS.textMuted, gridColumn: '1 / -1' }}>
               <ConnectionIndicator status={connectionStatus} />
               <span className="whitespace-nowrap">
                 {agentCount} agents
                 {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
               </span>
             </div>
-            <div className="px-1 pb-1" style={{ color: COLORS.textMuted }}>
+            <div className="px-1 pb-1" style={{ color: COLORS.textMuted, gridColumn: '1 / -1' }}>
               {formatTokens(totalTokens)} tokens
               <span style={{ color: COLORS.complete + '65', marginLeft: 4 }}>
                 ~${agentCost(totalTokens).toFixed(2)}

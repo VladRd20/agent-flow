@@ -215,7 +215,8 @@ export function computeFitTransform(input: FitInput, cache: FitCache): Transform
   const padTop = clamp(availH * 0.05, 12, 48)
   const padBottom = padTop + FIT_LABEL_ROOM
   // Reserve the right-hand overlay, but never more than 40% of the width.
-  const right = Math.min(rightInset, dimensions.width * 0.4)
+  // Name plates hang half their width beside a node, so keep a little extra clear of the chrome.
+  const right = Math.min(rightInset > 0 ? rightInset + 56 : 0, dimensions.width * 0.4)
   const availW = dimensions.width - right
   const innerW = Math.max(availW - padX * 2, availW * 0.5)
   const innerH = Math.max(availH - padTop - padBottom, availH * 0.5)

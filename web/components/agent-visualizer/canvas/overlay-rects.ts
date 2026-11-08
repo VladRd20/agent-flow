@@ -16,10 +16,11 @@ export function overlapArea(a: Rect, b: Rect): number {
 }
 
 /** Shift a rect so it lies inside the viewport (never resizes it). */
-export function clampRectToViewport(r: Rect, vw: number, vh: number, margin: number): Rect {
+export function clampRectToViewport(r: Rect, vw: number, vh: number, margin: number, top = 0): Rect {
+  const minY = Math.max(margin, top)
   const maxX = Math.max(margin, vw - margin - r.w)
-  const maxY = Math.max(margin, vh - margin - r.h)
-  return { x: Math.min(Math.max(margin, r.x), maxX), y: Math.min(Math.max(margin, r.y), maxY), w: r.w, h: r.h }
+  const maxY = Math.max(minY, vh - margin - r.h)
+  return { x: Math.min(Math.max(margin, r.x), maxX), y: Math.min(Math.max(minY, r.y), maxY), w: r.w, h: r.h }
 }
 
 export function intersectsViewport(r: Rect, vw: number, vh: number, slack = 0): boolean {
@@ -67,12 +68,12 @@ export interface PlaceResult { rect: Rect; index: number; clean: boolean }
  */
 export function placeBest(
   candidates: Rect[], placed: PlacedRects, vw: number, vh: number,
-  margin: number, pad: number, ignoreOwner?: string,
+  margin: number, pad: number, ignoreOwner?: string, top = 0,
 ): PlaceResult | null {
   let best: PlaceResult | null = null
   let bestOverlap = Infinity
   for (let i = 0; i < candidates.length; i++) {
-    const clamped = clampRectToViewport(candidates[i], vw, vh, margin)
+    const clamped = clampRectToViewport(candidates[i], vw, vh, margin, top)
     if (!placed.collides(clamped, pad, ignoreOwner)) return { rect: clamped, index: i, clean: true }
     const o = placed.totalOverlap(clamped, ignoreOwner)
     if (o < bestOverlap) { bestOverlap = o; best = { rect: clamped, index: i, clean: false } }

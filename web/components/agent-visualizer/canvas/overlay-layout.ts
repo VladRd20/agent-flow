@@ -37,6 +37,10 @@ export interface OverlayInput {
   dpr: number
   /** Px at the bottom of the viewport covered by the control bar; labels/bubbles/tool cards clamp above it */
   bottomInset?: number
+  /** Px at the top covered by chrome (top bar, message pill, phone cost card); labels/bubbles/tool cards clamp below it */
+  topInset?: number
+  /** Px at the right covered by chrome (wide-layout cost card); labels/bubbles/tool cards clamp left of it */
+  rightInset?: number
   deltaTime: number
   /** Sim time used for bubble lifetimes */
   simTime: number
@@ -237,6 +241,10 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
   const { ctx, agents, toolCalls, transform, viewport, dpr } = input
   const vw = viewport.width
   const vh = viewport.height
+  const rawTop = Math.max(0, input.topInset ?? 0)
+  const placeTop = rawTop > vh * 0.5 ? 0 : rawTop
+  // Placement width: floating cards never settle under right-hand chrome (cost card)
+  const vwPlace = Math.max(vw * 0.5, vw - Math.max(0, input.rightInset ?? 0))
   // Placement area: floating cards never settle under the bottom control bar
   const vhPlace = Math.max(vh * 0.4, vh - Math.max(0, input.bottomInset ?? 0))
   const zoom = transform.scale > 0 ? transform.scale : 1
@@ -326,7 +334,7 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
 
     // Non-forced labels are only shown when a collision-free spot exists;
     // forced ones (main / selected / hovered) take the least-overlapping spot.
-    const best = placeBest(candidates.map(c => c.rect), placed, vw, vhPlace, margin, pad, id)
+    const best = placeBest(candidates.map(c => c.rect), placed, vwPlace, vhPlace, margin, pad, id, placeTop)
     if (!best) continue
     const mode = candidates[best.index].mode
     const shown = (best.clean || e.forced) && intersectsViewport(best.rect, vw, vh)
@@ -408,9 +416,14 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
       { rect: { x: e.sx - nodeHalf - gap - blockW, y: topY, w: blockW, h: blockH }, side: 'left' },
       { rect: { x: e.sx - blockW / 2, y: e.sy - nodeHalf - gap - blockH, w: blockW, h: blockH }, side: 'top' },
       { rect: { x: e.sx - blockW / 2, y: (labelRect ? labelRect.y + labelRect.h : e.sy + nodeHalf) + gap, w: blockW, h: blockH }, side: 'bottom' },
+      { rect: { x: e.sx + nodeHalf + gap, y: e.sy - nodeHalf - blockH, w: blockW, h: blockH }, side: 'right' },
+      { rect: { x: e.sx - nodeHalf - gap - blockW, y: e.sy - nodeHalf - blockH, w: blockW, h: blockH }, side: 'left' },
+      { rect: { x: e.sx + nodeHalf + gap, y: e.sy + nodeHalf, w: blockW, h: blockH }, side: 'right' },
+      { rect: { x: e.sx - nodeHalf - gap - blockW, y: e.sy + nodeHalf, w: blockW, h: blockH }, side: 'left' },
     ]
-    const best = placeBest(cands.map(c => c.rect), placed, vw, vhPlace, margin, pad, e.id)
-    if (!best) continue
+    const best = placeBest(cands.map(c => c.rect), placed, vwPlace, vhPlace, margin, pad, e.id, placeTop)
+    // A bubble never covers a name plate, node or another bubble: hide it rather than overlap.
+    if (!best || !best.clean) continue
     const side = cands[best.index].side
     placed.add(best.rect, `bubble:${e.id}`)
     for (const it of live) {
@@ -452,7 +465,7 @@ export function beginOverlayFrame(input: OverlayInput): OverlayFrame {
       [0, -step * 2], [0, step * 2], [cardW * 0.6, -step], [-cardW * 0.6, -step],
     ]
     const cands = shifts.map(([dx, dy]) => ({ x: base.x + dx, y: base.y + dy, w: cardW, h: cardH }))
-    const best = placeBest(cands, placed, vw, vhPlace, margin, 2)
+    const best = placeBest(cands, placed, vwPlace, vhPlace, margin, 2, undefined, placeTop)
     const shown = !!best && (best.clean || important)
     const fade = stepFade(toolFade, id, shown ? 1 : 0, input.deltaTime, LABEL_STACK.fadeRate)
     liveTools.add(id)
