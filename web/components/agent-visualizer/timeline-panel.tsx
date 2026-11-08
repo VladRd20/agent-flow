@@ -7,6 +7,7 @@ import { formatTimelineModels } from '@/lib/timeline-models'
 import { pickMarkerInterval, formatMarker } from '@/lib/timeline-markers'
 import { PanelHeader, SlidingPanel } from './shared-ui'
 import { useIsMobile } from '@/hooks/use-is-mobile'
+import { cappedDpr } from '@/lib/frame-driver'
 
 interface TimelinePanelProps {
   visible: boolean
@@ -228,11 +229,16 @@ function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: T
     // Use the scroll container's clientWidth (excludes scrollbar) for a snug fit
     const scrollContainer = canvas.parentElement
     const width = scrollContainer?.clientWidth ?? canvas.clientWidth
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = width * dpr
-    canvas.height = canvasHeight * dpr
-    canvas.style.width = `${width}px`
-    canvas.style.height = `${canvasHeight}px`
+    const dpr = cappedDpr()
+    // Assigning width/height reallocates and clears the bitmap: only do it when the size changed
+    const pxW = Math.round(width * dpr)
+    const pxH = Math.round(canvasHeight * dpr)
+    if (canvas.width !== pxW) canvas.width = pxW
+    if (canvas.height !== pxH) canvas.height = pxH
+    const cssW = `${width}px`
+    const cssH = `${canvasHeight}px`
+    if (canvas.style.width !== cssW) canvas.style.width = cssW
+    if (canvas.style.height !== cssH) canvas.style.height = cssH
 
     drawTimeline(ctx, sortedEntries, currentTime, width, canvasHeight, dpr, metrics)
     // redraw on every prop change (component only re-renders on data/time updates)

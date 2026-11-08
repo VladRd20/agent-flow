@@ -8,7 +8,13 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import { FAVICON_LINK_TAGS } from './favicon'
 
-const WEBVIEW_DIR = path.join(__dirname, 'webview')
+let WEBVIEW_DIR = path.join(__dirname, 'webview')
+
+/** Test hook: serve assets from another directory (also drops cached copies). */
+export function setWebviewDirForTest(dir: string): void {
+  WEBVIEW_DIR = dir
+  assetCache.clear()
+}
 
 /**
  * Asset version stamp (content hash of the built bundle) appended to asset URLs, so a
@@ -80,6 +86,21 @@ const COMMON_HEADERS = {
   'X-Frame-Options': 'DENY',
 }
 
+interface CachedAsset { content: Buffer; etag: string; mtimeMs: number; size: number }
+const assetCache = new Map<string, CachedAsset>()
+
+/** Read an asset once and keep it in memory; re-read only when mtime/size change. Throws if missing. */
+function loadAsset(filePath: string): CachedAsset {
+  const st = fs.statSync(filePath)
+  const hit = assetCache.get(filePath)
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit
+  const content = fs.readFileSync(filePath)
+  const etag = `"${crypto.createHash('sha256').update(content).digest('hex').slice(0, 16)}"`
+  const entry = { content, etag, mtimeMs: st.mtimeMs, size: st.size }
+  assetCache.set(filePath, entry)
+  return entry
+}
+
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = resolveRequestPath(req.url || '/')
   if (url === null) {
@@ -116,9 +137,14 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
   }
 
   try {
-    const content = fs.readFileSync(filePath)
-    res.writeHead(200, { ...COMMON_HEADERS, 'Content-Type': mime })
-    res.end(content)
+    const asset = loadAsset(filePath)
+    if (req.headers['if-none-match'] === asset.etag) {
+      res.writeHead(304, { ...COMMON_HEADERS, ETag: asset.etag })
+      res.end()
+      return
+    }
+    res.writeHead(200, { ...COMMON_HEADERS, 'Content-Type': mime, ETag: asset.etag })
+    res.end(asset.content)
   } catch {
     res.writeHead(404)
     res.end('Not found')

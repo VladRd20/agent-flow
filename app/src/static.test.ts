@@ -70,3 +70,50 @@ test('serveStatic: sets Referrer-Policy and X-Frame-Options on shell and assets'
     }
   }
 })
+
+function getRaw(path: string, headers: http.OutgoingHttpHeaders = {}): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(serveStatic)
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo
+      http.get({ host: '127.0.0.1', port, path, headers }, (res) => {
+        let body = ''
+        res.on('data', (c) => { body += c })
+        res.on('end', () => { server.close(); resolve({ status: res.statusCode ?? 0, headers: res.headers, body }) })
+      }).on('error', (e) => { server.close(); reject(e) })
+    })
+  })
+}
+
+import * as fsSync from 'fs'
+import * as osSync from 'os'
+import * as pathSync from 'path'
+import { setWebviewDirForTest } from './static'
+
+function withTempWebview(): string {
+  const dir = fsSync.mkdtempSync(pathSync.join(osSync.tmpdir(), 'af-webview-'))
+  fsSync.writeFileSync(pathSync.join(dir, 'index.js'), 'console.log(1)')
+  setWebviewDirForTest(dir)
+  return dir
+}
+
+test('serveStatic: assets carry an ETag and answer If-None-Match with 304, keeping private no-cache', async () => {
+  const dir = withTempWebview()
+  try {
+  const first = await getRaw('/index.js?v=abc')
+  assert.equal(first.status, 200)
+  const etag = first.headers.etag
+  assert.match(String(etag), /^"[0-9a-f]{16}"$/)
+  assert.equal(first.headers['cache-control'], 'private, no-cache')
+  const again = await getRaw('/index.js?v=abc', { 'If-None-Match': String(etag) })
+  assert.equal(again.status, 304)
+  assert.equal(again.body, '')
+  assert.equal(again.headers['cache-control'], 'private, no-cache')
+  const stale = await getRaw('/index.js', { 'If-None-Match': '"deadbeefdeadbeef"' })
+  assert.equal(stale.status, 200)
+  } finally { setWebviewDirForTest(pathSync.join(__dirname, 'webview')); fsSync.rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('serveStatic: a missing asset is still 404', async () => {
+  assert.equal((await getRaw('/nope.js')).status, 404)
+})
