@@ -71,7 +71,14 @@ export function resolveRequestPath(rawUrl: string): string | null {
 // `private` keeps shared caches (Cloudflare's edge in front of the tunnel) from storing
 // anything: a cached copy would be served stale and without the password gate.
 // `no-cache` makes browsers revalidate, so a deploy shows up on a plain reload.
-const COMMON_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-cache' }
+const COMMON_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Cache-Control': 'private, no-cache',
+  // No strict CSP: the shell relies on an inline <style> and an IIFE bundle. These two
+  // headers stop referrer leakage and clickjacking without risking the UI.
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+}
 
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = resolveRequestPath(req.url || '/')

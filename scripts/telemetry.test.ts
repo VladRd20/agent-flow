@@ -34,8 +34,8 @@ test('hardcoded constants are present', () => {
   assert.match(TELEMETRY_PUBLISHABLE_KEY, /^sb_publishable_/)
 })
 
-test('isTelemetryEnabled: default (no env) is true', () => {
-  assert.equal(isTelemetryEnabled({}), true)
+test('isTelemetryEnabled: default (no env) is false (opt-in)', () => {
+  assert.equal(isTelemetryEnabled({}), false)
 })
 
 test('isTelemetryEnabled: AGENT_FLOW_TELEMETRY=false disables', () => {
@@ -45,7 +45,7 @@ test('isTelemetryEnabled: AGENT_FLOW_TELEMETRY=false disables', () => {
   assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: '' }), false)
 })
 
-test('isTelemetryEnabled: AGENT_FLOW_TELEMETRY=true stays enabled', () => {
+test('isTelemetryEnabled: AGENT_FLOW_TELEMETRY=true/1 opts in', () => {
   assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: 'true' }), true)
   assert.equal(isTelemetryEnabled({ AGENT_FLOW_TELEMETRY: '1' }), true)
 })
@@ -62,7 +62,7 @@ test('isTelemetryEnabled: DO_NOT_TRACK wins even when AGENT_FLOW_TELEMETRY=true'
 test('emit appends to JSONL when enabled', async () => {
   const dir = setup()
   const client = makeClient(dir)
-  delete process.env.AGENT_FLOW_TELEMETRY
+  process.env.AGENT_FLOW_TELEMETRY = '1'
   delete process.env.DO_NOT_TRACK
   await client.init()
   client.emit(baseEvent())
@@ -110,7 +110,7 @@ test('disabled via DO_NOT_TRACK=1 writes nothing to disk', async () => {
 
 test('install-id persists across init calls', async () => {
   const dir = setup()
-  delete process.env.AGENT_FLOW_TELEMETRY
+  process.env.AGENT_FLOW_TELEMETRY = '1'
   delete process.env.DO_NOT_TRACK
   const client1 = makeClient(dir)
   await client1.init()
@@ -131,7 +131,7 @@ test('install-id persists across init calls', async () => {
 
 test('emit sanitizes session_id', async () => {
   const dir = setup()
-  delete process.env.AGENT_FLOW_TELEMETRY
+  process.env.AGENT_FLOW_TELEMETRY = '1'
   delete process.env.DO_NOT_TRACK
   const client = makeClient(dir)
   await client.init()
@@ -140,4 +140,24 @@ test('emit sanitizes session_id', async () => {
   const jsonl = path.join(dir, 'telemetry', 'events.jsonl')
   const e = JSON.parse(fs.readFileSync(jsonl, 'utf-8').trim())
   assert.equal(e.session_id, 'quotebackslashnewline')
+})
+
+test('default (no env) writes nothing to disk and makes no network request', async () => {
+  const dir = setup()
+  delete process.env.AGENT_FLOW_TELEMETRY
+  delete process.env.DO_NOT_TRACK
+  const origFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = (async () => { calls++; return new Response('') }) as typeof fetch
+  try {
+    const client = makeClient(dir)
+    await client.init()
+    client.emit(baseEvent())
+    await client.dispose()
+    assert.equal(calls, 0)
+    assert.equal(fs.existsSync(path.join(dir, 'telemetry', 'events.jsonl')), false)
+    assert.equal(fs.existsSync(path.join(dir, 'installation-id')), false)
+  } finally {
+    globalThis.fetch = origFetch
+  }
 })

@@ -159,7 +159,7 @@ duration, event count, OS/arch, Agent Flow version, distinct model IDs
 observed, which runtimes were watched, and error class names. Prompts, file
 paths, tool calls, user info, and environment variables are never sent.
 
-- **Turn off:** `export AGENT_FLOW_TELEMETRY=false` or `export DO_NOT_TRACK=1`
+- **Opt-in:** off by default; enable with `export AGENT_FLOW_TELEMETRY=1` (`DO_NOT_TRACK=1` always wins)
   (disabled installs write zero state to disk — no `~/.agent-flow/` directory)
 - **Inspect the payload:** `cat ~/.agent-flow/telemetry/events.jsonl`
 - **Full schema + exact fields:** see the v0.8.1 entry in

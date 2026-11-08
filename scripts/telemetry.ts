@@ -8,7 +8,7 @@ import { syncOnce } from './telemetry/sync'
  * Hardcoded telemetry endpoint + publishable key.
  *
  * These ship inside every published binary. No env var override, no runtime
- * fallback. All enabled installs send events to Agent Flow's Supabase project.
+ * fallback. Telemetry is OPT-IN (AGENT_FLOW_TELEMETRY=1); only opted-in installs send events to Agent Flow's Supabase project.
  * Forks that republish under a different name must edit these constants and
  * rebuild.
  *
@@ -32,7 +32,7 @@ const FIRST_SYNC_DELAY_MS = 2 * 1000
 const SYNC_SCHEDULE_MS = [2 * 60 * 1000, 3 * 60 * 1000]
 const SYNC_REPEAT_MS = 5 * 60 * 1000
 
-const FALSY_VALUES = new Set(['false', '0', 'disabled', ''])
+const TRUTHY_VALUES = new Set(['true', '1', 'enabled', 'on', 'yes'])
 
 export interface TelemetryEvent {
   event_type: 'session_start' | 'session_end' | 'error'
@@ -79,10 +79,10 @@ export interface TelemetryClient {
 /**
  * Pure function: given an env record, return true if telemetry should emit.
  *
- * Rules:
+ * Rules (opt-in):
  * - `DO_NOT_TRACK` truthy → disabled (wins over everything)
- * - `AGENT_FLOW_TELEMETRY` falsy (`false`, `0`, `disabled`, ``) → disabled
- * - Otherwise enabled (including when AGENT_FLOW_TELEMETRY is unset)
+ * - Enabled only when `AGENT_FLOW_TELEMETRY` is explicitly truthy
+ *   (`true`, `1`, `enabled`, `on`, `yes`); unset or anything else → disabled
  */
 export function isTelemetryEnabled(env: NodeJS.ProcessEnv): boolean {
   const dnt = env.DO_NOT_TRACK
@@ -90,10 +90,7 @@ export function isTelemetryEnabled(env: NodeJS.ProcessEnv): boolean {
     return false
   }
   const flag = env.AGENT_FLOW_TELEMETRY
-  if (flag !== undefined && FALSY_VALUES.has(flag.toLowerCase())) {
-    return false
-  }
-  return true
+  return flag !== undefined && TRUTHY_VALUES.has(flag.trim().toLowerCase())
 }
 
 export function createTelemetryClient(opts: TelemetryClientOptions): TelemetryClient {

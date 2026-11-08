@@ -535,6 +535,9 @@ function resolveRuntimeMode(explicit?: RelayRuntimeMode): RelayRuntimeMode {
   return raw === 'claude' || raw === 'codex' ? raw : 'auto'
 }
 
+/** Maximum concurrent SSE clients; further /events requests get a 503. */
+export const MAX_SSE_CLIENTS = 200
+
 export async function createRelay(options: RelayOptions): Promise<Relay> {
   const { workspace } = options
   verbose = options.verbose ?? false
@@ -649,6 +652,11 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
 
   return {
     handleSSE(req: http.IncomingMessage, res: http.ServerResponse) {
+      if (sseClients.size >= MAX_SSE_CLIENTS) {
+        res.writeHead(503, { 'Content-Type': 'text/plain', 'Retry-After': '5', 'Cache-Control': 'no-store' })
+        res.end('Too many event-stream clients')
+        return
+      }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',

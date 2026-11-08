@@ -80,6 +80,12 @@ export async function startServer(options: ServerOptions) {
     return serveStatic(req, res)
   })
 
+  // Slowloris hardening. requestTimeout only bounds receiving the request, so it does
+  // not cut long-lived SSE /events responses (those are GETs with no body).
+  server.headersTimeout = 20_000
+  server.requestTimeout = 30_000
+  server.keepAliveTimeout = 65_000
+
   server.on('clientError', (_err, socket) => {
     if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n')
     else socket.destroy()

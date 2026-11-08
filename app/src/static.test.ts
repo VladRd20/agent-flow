@@ -49,3 +49,24 @@ test('parseArgs rejects shell-unsafe --host values', () => {
     assert.equal(bad.host, '127.0.0.1')
   } finally { console.error = orig }
 })
+
+test('serveStatic: sets Referrer-Policy and X-Frame-Options on shell and assets', async () => {
+  for (const p of ['/', '/index.js']) {
+    const h = await new Promise<http.IncomingHttpHeaders>((resolve, reject) => {
+      const server = http.createServer(serveStatic)
+      server.listen(0, '127.0.0.1', () => {
+        const { port } = server.address() as AddressInfo
+        http.get({ host: '127.0.0.1', port, path: p }, (res) => {
+          res.resume()
+          res.on('end', () => { server.close(); resolve(res.headers) })
+        }).on('error', (e) => { server.close(); reject(e) })
+      })
+    })
+    if (p === '/') {
+      assert.equal(h['referrer-policy'], 'no-referrer')
+      assert.equal(h['x-frame-options'], 'DENY')
+    } else if (h['x-frame-options'] !== undefined) {
+      assert.equal(h['referrer-policy'], 'no-referrer')
+    }
+  }
+})

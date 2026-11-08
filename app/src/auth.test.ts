@@ -144,3 +144,30 @@ test('logout clears the cookie', async () => {
   assert.equal(r.status, 303)
   assert.match(r.headers['set-cookie']?.[0] || '', /Max-Age=0/)
 })
+
+test('failed-attempt map is bounded: oldest entries are evicted past the cap', async () => {
+  const gate = createAuthGate(HASH, () => clock, 3)
+  const srv = http.createServer((q, s) => {
+    if (gate.handle(q, s, (q.url || '/').split(/[?#]/, 1)[0])) return
+    s.writeHead(200); s.end('app')
+  })
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
+  const p = (srv.address() as AddressInfo).port
+  const post = (password: string, ip: string) => new Promise<number>((resolve, reject) => {
+    const body = new URLSearchParams({ password }).toString()
+    const r = http.request({ host: '127.0.0.1', port: p, path: '/login', method: 'POST',
+      headers: { 'X-Forwarded-Proto': 'https', 'Cf-Connecting-IP': ip, 'Content-Type': 'application/x-www-form-urlencoded' } },
+    (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)) })
+    r.on('error', reject); r.end(body)
+  })
+  try {
+    for (let i = 0; i < 10; i++) assert.equal(await post('bad', '198.51.100.1'), 401)
+    assert.equal(await post(PASSWORD, '198.51.100.1'), 429) // locked out while tracked
+    for (const ip of ['198.51.100.2', '198.51.100.3', '198.51.100.4']) assert.equal(await post('bad', ip), 401)
+    // oldest entry evicted by the cap, so the first IP is no longer tracked
+    assert.equal(await post(PASSWORD, '198.51.100.1'), 303)
+    // recent entries still count: lockout semantics unchanged for tracked IPs
+    for (let i = 0; i < 9; i++) await post('bad', '198.51.100.4')
+    assert.equal(await post(PASSWORD, '198.51.100.4'), 429)
+  } finally { srv.close() }
+})

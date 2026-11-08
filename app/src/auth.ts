@@ -122,7 +122,10 @@ export interface AuthGate {
   handle(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean
 }
 
-export function createAuthGate(passwordHash: string, now: () => number = Date.now): AuthGate {
+/** Upper bound on distinct IPs tracked in the failed-attempt map. */
+export const MAX_TRACKED_IPS = 10_000
+
+export function createAuthGate(passwordHash: string, now: () => number = Date.now, maxTrackedIps: number = MAX_TRACKED_IPS): AuthGate {
   const key = crypto.createHash('sha256').update('agent-flow-session\0' + passwordHash).digest()
   const fails = new Map<string, number[]>()
 
@@ -146,6 +149,22 @@ export function createAuthGate(passwordHash: string, now: () => number = Date.no
     if (list.length) fails.set(ip, list)
     else fails.delete(ip)
     return list
+  }
+
+  /** Record a failure list for ip, keeping the map bounded (drop expired, then oldest). */
+  function setFails(ip: string, list: number[]) {
+    fails.delete(ip) // re-insert so Map order tracks recency
+    fails.set(ip, list)
+    if (fails.size <= maxTrackedIps) return
+    const cutoff = now() - FAIL_WINDOW_MS
+    for (const [k, v] of fails) {
+      if (fails.size <= maxTrackedIps) break
+      if (k !== ip && v[v.length - 1] <= cutoff) fails.delete(k)
+    }
+    for (const k of fails.keys()) {
+      if (fails.size <= maxTrackedIps) break
+      if (k !== ip) fails.delete(k)
+    }
   }
 
   function sendLogin(res: http.ServerResponse, status: number, error?: string) {
@@ -204,7 +223,7 @@ export function createAuthGate(passwordHash: string, now: () => number = Date.no
       } else {
         const list = recentFails(ip)
         list.push(now())
-        fails.set(ip, list)
+        setFails(ip, list)
         console.warn(`[auth] failed sign-in from ${ip} (${list.length}/${MAX_FAILS})`)
         sendLogin(res, 401, 'Wrong password.')
       }
