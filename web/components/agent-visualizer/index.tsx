@@ -446,7 +446,7 @@ export function AgentVisualizer() {
 
       {/* Message feed panel (top-left). On phones the files/transcript sheets start at the
           same height (and the agent chat sheet can reach it), so the pill steps aside instead of sitting half-hidden under them. */}
-      <div className={isMobile && (showFileAttention || showTranscript || !!selectedAgent) ? 'hidden' : 'contents'}>
+      <div className={isMobile && (showFileAttention || showTranscript || showTimeline || !!selectedAgent) ? 'hidden' : 'contents'}>
         <MessageFeedPanel
           conversations={conversations}
           agents={agents}

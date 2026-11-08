@@ -61,7 +61,7 @@ export const ViewControls = memo(function ViewControls({
     <div
       role="group"
       aria-label="View controls"
-      className="absolute flex flex-col gap-1"
+      className="absolute flex flex-col gap-1 [@media(max-height:500px)]:flex-row"
       style={{
         left: 'var(--af-edge-left)',
         bottom: 'calc(var(--af-above-bar) + 8px)',
