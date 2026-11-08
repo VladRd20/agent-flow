@@ -5,6 +5,7 @@ import { COLORS } from '@/lib/colors'
 import type { SessionInfo } from '@/lib/vscode-bridge'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 import { ALL_SESSIONS_ID } from '@/lib/all-sessions'
+import { allTabLabel, nextRunningSessionId, sessionCounts } from '@/lib/session-nav'
 
 interface SessionTabsProps {
   sessions: SessionInfo[]
@@ -83,6 +84,9 @@ export function SessionTabs({
     tabRefs.current.get(id)?.querySelector<HTMLElement>('[role="tab"]')?.focus()
   }
 
+  const { live: liveCount, total: totalCount } = sessionCounts(sessions)
+  const nextRunningId = nextRunningSessionId(sessions, selectedSessionId)
+
   const fadeClass = fade === 'none' ? '' : `af-fade-${fade}`
 
   return (
@@ -91,6 +95,7 @@ export function SessionTabs({
       className={`min-w-0 overflow-x-auto overflow-y-hidden scrollbar-hide snap-x overscroll-x-contain ${fadeClass}`}
       style={{ touchAction: 'pan-x', scrollPaddingInline: 12 }}
     >
+      <div className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
       <div role="tablist" aria-label="Sessions" onKeyDown={onTabKeyDown} className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
         {sessions.length > 0 && (() => {
           const isSelected = selectedSessionId === ALL_SESSIONS_ID
@@ -110,7 +115,7 @@ export function SessionTabs({
                 type="button"
                 role="tab"
                 aria-selected={isSelected}
-                aria-label={`All sessions (${sessions.length})`}
+                aria-label={liveCount > 0 ? `All sessions (${liveCount} running of ${totalCount})` : `All sessions (${totalCount})`}
                 data-tab-id={ALL_SESSIONS_ID}
                 tabIndex={focusableId === ALL_SESSIONS_ID ? 0 : -1}
                 onClick={() => onSelectSession(ALL_SESSIONS_ID)}
@@ -128,7 +133,7 @@ export function SessionTabs({
                   <rect x="0" y="0" width="4" height="4" rx="0.8" /><rect x="6" y="0" width="4" height="4" rx="0.8" />
                   <rect x="0" y="6" width="4" height="4" rx="0.8" /><rect x="6" y="6" width="4" height="4" rx="0.8" />
                 </svg>
-                <span>All · {sessions.length}</span>
+                <span>{allTabLabel(liveCount, totalCount)}</span>
               </button>
             </div>
           )
@@ -191,6 +196,24 @@ export function SessionTabs({
             </div>
           )
         })}
+      </div>
+      {isMobile && nextRunningId && (
+        <button
+          type="button"
+          onClick={() => onSelectSession(nextRunningId)}
+          aria-label="Jump to next running session"
+          className="af-hit snap-start flex-shrink-0 rounded px-2 py-0.5 flex items-center gap-1"
+          style={{
+            whiteSpace: 'nowrap',
+            minHeight: 32,
+            background: COLORS.tabInactiveBg,
+            border: `1px solid ${COLORS.tabSelectedBorder}`,
+            color: COLORS.complete,
+          }}
+        >
+          <span aria-hidden="true">Next running ▸</span>
+        </button>
+      )}
       </div>
     </div>
   )
