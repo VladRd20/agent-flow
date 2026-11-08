@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useSyncExternalStore } from 'react'
 
 /**
  * Mobile/narrow-viewport breakpoint (px). Matches Tailwind's default `md`
@@ -15,27 +15,28 @@ export const MOBILE_BREAKPOINT_PX = 768
  */
 export const MOBILE_QUERY = `(max-width: ${MOBILE_BREAKPOINT_PX}px), (pointer: coarse) and (max-height: 500px)`
 
+function subscribeMedia(query: string, onChange: () => void): () => void {
+  if (typeof window === 'undefined' || !window.matchMedia) return () => {}
+  const mql = window.matchMedia(query)
+  if (mql.addEventListener) {
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }
+  // legacy API fallback for older WebViews
+  ;(mql as any).addListener(onChange)
+  return () => (mql as any).removeListener(onChange)
+}
+
+/**
+ * useSyncExternalStore with a fixed server snapshot: the server render and the hydration pass both
+ * use `fallback`, then React re-renders with the real match, so a phone never hits a hydration mismatch.
+ */
 function useMediaQuery(query: string, fallback: boolean): boolean {
-  const [matches, setMatches] = useState<boolean>(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return fallback
-    return window.matchMedia(query).matches
-  })
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return
-    const mql = window.matchMedia(query)
-    const update = () => setMatches(mql.matches)
-    update()
-    if (mql.addEventListener) {
-      mql.addEventListener('change', update)
-      return () => mql.removeEventListener('change', update)
-    }
-    // legacy API fallback for older WebViews
-    ;(mql as any).addListener(update)
-    return () => (mql as any).removeListener(update)
-  }, [query])
-
-  return matches
+  return useSyncExternalStore(
+    (cb) => subscribeMedia(query, cb),
+    () => (typeof window === 'undefined' || !window.matchMedia ? fallback : window.matchMedia(query).matches),
+    () => fallback,
+  )
 }
 
 /**
