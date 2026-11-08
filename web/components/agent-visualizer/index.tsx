@@ -279,11 +279,11 @@ export function AgentVisualizer() {
   const totalTokens = useMemo(() => ledgerTotalTokens(usageLedger), [usageLedger])
 
   // Text alternative for the canvas-drawn graph and cost card (cost from the cumulative ledger)
+  const totalCost = useMemo(() => ledgerBreakdown(usageLedger).totalCost, [usageLedger])
   const canvasAriaLabel = useMemo(() => {
-    const { totalCost } = ledgerBreakdown(usageLedger)
     const n = liveAgents.size
     return `Agent graph: ${n} ${n === 1 ? 'agent' : 'agents'}, ${formatTokens(totalTokens)} tokens, about $${totalCost.toFixed(2)}`
-  }, [liveAgents, usageLedger, totalTokens])
+  }, [liveAgents, totalTokens, totalCost])
 
   const selectedAgent = selection.selectedAgentId ? agents.get(selection.selectedAgentId) : null
   // On phones, sheets (files / transcript / timeline / agent detail+chat) take over the bottom,
@@ -532,6 +532,7 @@ export function AgentVisualizer() {
         showFinished={showFinished}
         onToggleFinished={toggleShowFinished}
         totalTokens={totalTokens}
+        totalCost={totalCost}
         showFileAttention={showFileAttention}
         showTranscript={showTranscript}
         showCostOverlay={showCostOverlay}

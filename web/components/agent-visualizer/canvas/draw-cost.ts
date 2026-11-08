@@ -143,13 +143,65 @@ export function clearCostCardInset(): void {
   setRightInset(COST_CARD_KEY, 0)
 }
 
-/** Per-agent and per-tool cost rows derived from the cumulative ledger (survives agent/tool removal). */
-export function ledgerBreakdown(ledger: UsageLedger) {
-  const agentBreakdown = Array.from(ledger.agents.values())
-    .map(a => ({ name: a.name, isMain: a.isMain, tokens: a.tokens, cost: agentCost(a.tokens, a.model) }))
-    .sort((a, b) => b.cost - a.cost)
-  const totalTokens = agentBreakdown.reduce((s, a) => s + a.tokens, 0)
-  const totalCost = agentBreakdown.reduce((s, a) => s + a.cost, 0)
+export type CostRowStatus = 'running' | 'complete' | 'removed'
+
+export interface CostRow {
+  id: string
+  name: string
+  isMain: boolean
+  model?: string
+  tokens: number
+  cost: number
+  status: CostRowStatus
+}
+
+/** Reconciling row: everything the visible per-agent rows do not show, so they sum to the total. */
+export interface CostRestRow {
+  count: number
+  tokens: number
+  cost: number
+  label: string
+}
+
+function rowStatus(agent: Agent | undefined): CostRowStatus {
+  if (!agent) return 'removed'
+  return agent.state === 'complete' || agent.state === 'error' ? 'complete' : 'running'
+}
+
+/** Per-agent and per-tool cost rows derived from the cumulative ledger (survives agent/tool removal).
+ *  `liveAgents` (the graph's current agents) marks which ledger entries are still on screen; when given,
+ *  `rows` lists running agents first, then finished ones, each by cost, capped at `maxRows`, and `rest`
+ *  folds every removed agent (plus any overflow) into one reconciling "Finished/removed agents" row. */
+export function ledgerBreakdown(
+  ledger: UsageLedger,
+  liveAgents?: ReadonlyMap<string, Agent>,
+  maxRows: number = COST_PANEL.maxRows,
+) {
+  const all: CostRow[] = Array.from(ledger.agents, ([id, a]) => ({
+    id,
+    name: a.name,
+    isMain: a.isMain,
+    model: a.model,
+    tokens: a.tokens,
+    cost: agentCost(a.tokens, a.model),
+    status: liveAgents ? rowStatus(liveAgents.get(id)) : 'running',
+  }))
+  const totalTokens = all.reduce((s, a) => s + a.tokens, 0)
+  const totalCost = all.reduce((s, a) => s + a.cost, 0)
+
+  const statusOrder: Record<CostRowStatus, number> = { running: 0, complete: 1, removed: 2 }
+  const agentBreakdown = all.slice().sort((a, b) => b.cost - a.cost)
+  const live = all.filter(r => r.status !== 'removed')
+    .sort((a, b) => statusOrder[a.status] - statusOrder[b.status] || b.cost - a.cost)
+  const rows = liveAgents ? live.slice(0, maxRows) : agentBreakdown.slice(0, maxRows)
+  const shown = new Set(rows.map(r => r.id))
+  const restList = all.filter(r => !shown.has(r.id))
+  const rest: CostRestRow | null = restList.length === 0 ? null : {
+    count: restList.length,
+    tokens: restList.reduce((s, r) => s + r.tokens, 0),
+    cost: restList.reduce((s, r) => s + r.cost, 0),
+    label: restList.every(r => r.status === 'removed') ? 'Finished/removed agents' : 'Other + finished agents',
+  }
 
   // Per-tool-type breakdown, costed at the owning agent's model rate
   const toolBreakdown = new Map<string, { tokens: number; cost: number }>()
@@ -162,14 +214,15 @@ export function ledgerBreakdown(ledger: UsageLedger) {
   const toolList = Array.from(toolBreakdown.entries())
     .map(([name, { tokens, cost }]) => ({ name, tokens, cost }))
     .sort((a, b) => b.cost - a.cost)
-  return { agentBreakdown, totalTokens, totalCost, toolList }
+  return { agentBreakdown, rows, rest, totalTokens, totalCost, toolList }
 }
 
 export function drawCostSummaryPanel(
   ctx: CanvasRenderingContext2D,
   ledger: UsageLedger,
+  liveAgents?: ReadonlyMap<string, Agent>,
 ) {
-  const { agentBreakdown, totalTokens, totalCost, toolList } = ledgerBreakdown(ledger)
+  const { agentBreakdown, rows, rest, totalTokens, totalCost, toolList } = ledgerBreakdown(ledger, liveAgents)
   if (agentBreakdown.length === 0) { clearCostCardInset(); return }
 
   // Panel dimensions — positioned top-right
@@ -188,7 +241,7 @@ export function drawCostSummaryPanel(
   const lineH = COST_PANEL.lineHeight + (narrow ? 6 : 0)
   const headerH = COST_PANEL.headerHeight
   const sectionGap = COST_PANEL.sectionGap
-  const agentRows = Math.min(agentBreakdown.length, COST_PANEL.maxRows)
+  const agentRows = rows.length + (rest ? 1 : 0)
   const toolRows = Math.min(toolList.length, COST_PANEL.maxRows)
   const panelH = headerH + (agentRows * lineH) + sectionGap + (toolRows > 0 ? 14 + toolRows * lineH : 0) + 12
 
@@ -223,7 +276,7 @@ export function drawCostSummaryPanel(
   // Per-agent breakdown
   const barW = panelW - COST_PANEL.contentPadding * 2
   for (let i = 0; i < agentRows; i++) {
-    const a = agentBreakdown[i]
+    const a = i < rows.length ? rows[i] : { name: rest!.label, isMain: false, cost: rest!.cost }
 
     // Mini bar background
     const ratio = totalCost > 0 ? a.cost / totalCost : 0

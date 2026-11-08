@@ -3,8 +3,7 @@
 import { memo, useCallback, useRef, useState } from "react"
 import { Z } from "@/lib/agent-types"
 import { COLORS } from "@/lib/colors"
-import { formatTokens } from "@/lib/utils"
-import { agentCost } from "./canvas/draw-cost"
+import { CostChip, CostLiveSummary } from "./cost-chip"
 import { SessionTabs } from "./session-tabs"
 import type { SessionInfo, ConnectionStatus } from "@/lib/bridge-types"
 import { useIsMobile } from "@/hooks/use-is-mobile"
@@ -121,6 +120,8 @@ export interface TopBarProps {
   showFinished: boolean
   onToggleFinished: () => void
   totalTokens: number
+  /** Cumulative session cost (USD) from the usage ledger */
+  totalCost: number
   // Panel toggles
   showFileAttention: boolean
   showTranscript: boolean
@@ -144,7 +145,7 @@ function DesktopTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
   connectionStatus,
-  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens,
+  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens, totalCost,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
@@ -179,12 +180,8 @@ function DesktopTopBar({
           {agentCount} agents
           {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
         </span>
-        <span>
-          {formatTokens(totalTokens)} tokens
-          <span style={{ color: COLORS.complete + '65', marginLeft: 4 }}>
-            ~${agentCost(totalTokens).toFixed(2)}
-          </span>
-        </span>
+        <CostChip cost={totalCost} tokens={totalTokens} active={showCostOverlay} onToggle={() => onTogglePanel('cost')} />
+        <CostLiveSummary cost={totalCost} tokens={totalTokens} />
 
         {/* Mutually exclusive panel group */}
         <div role="group" aria-label="Panels" className="flex items-center gap-1 px-1 py-0.5 rounded" style={{
@@ -222,7 +219,7 @@ function MobileTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
   connectionStatus,
-  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens,
+  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens, totalCost,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
@@ -261,6 +258,8 @@ function MobileTopBar({
       )}
 
       <div ref={menuRef} className="relative flex-shrink-0 flex items-center gap-2 ml-auto pointer-events-auto">
+        <CostChip compact cost={totalCost} tokens={totalTokens} active={showCostOverlay} onToggle={() => onTogglePanel('cost')} />
+        <CostLiveSummary cost={totalCost} tokens={totalTokens} />
         <ConnectionDot status={connectionStatus} />
         <button
           type="button"
@@ -309,12 +308,6 @@ function MobileTopBar({
               <span className="whitespace-nowrap">
                 {agentCount} agents
                 {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
-              </span>
-            </div>
-            <div className="px-1 pb-1" style={{ color: COLORS.textMuted, gridColumn: '1 / -1' }}>
-              {formatTokens(totalTokens)} tokens
-              <span style={{ color: COLORS.complete + '65', marginLeft: 4 }}>
-                ~${agentCost(totalTokens).toFixed(2)}
               </span>
             </div>
 
