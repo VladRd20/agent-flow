@@ -433,7 +433,6 @@ export function AgentVisualizer() {
         showFinished={showFinished}
         ariaLabel={canvasAriaLabel}
         viewCommand={viewCommand}
-        freezeRef={freeze.stateRef}
       />
 
       <ViewControls

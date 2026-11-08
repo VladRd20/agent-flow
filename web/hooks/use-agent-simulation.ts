@@ -377,13 +377,11 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       || result.agents !== prev.agents || result.toolCalls !== prev.toolCalls
       || result.edges !== prev.edges || result.particles !== prev.particles
       || result.discoveries !== prev.discoveries) return 'full'
-    // Frozen layout: no ambient animation, so nothing is pending and the loop may idle
-    if (!layoutFrozen) {
-      if (result.toolCalls.size > 0 || result.discoveries.length > 0) return 'slow'
-      for (const a of result.agents.values()) {
-        if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission'
-          || a.messageBubbles.length > 0) return 'slow'
-      }
+    // Freeze is layout-only: ambient animation (thinking pulse, tool timers, bubble fades) keeps running
+    if (result.toolCalls.size > 0 || result.discoveries.length > 0) return 'slow'
+    for (const a of result.agents.values()) {
+      if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission'
+        || a.messageBubbles.length > 0) return 'slow'
     }
     // Settling into idle: flush one final UI commit so throttled-away state
     // (last events, final clock value) reaches React before the loop stops.

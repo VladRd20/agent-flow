@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createFreezeState, isLayoutFrozen, readFreezePref, writeFreezePref, FREEZE_STORAGE_KEY } from './layout-freeze'
+import { createFreezeState, isLayoutFrozen, readFreezePref, writeFreezePref, FREEZE_STORAGE_KEY, THAW_MS } from './layout-freeze'
 
 function memStore(initial: Record<string, string> = {}) {
   const m = new Map(Object.entries(initial))
@@ -40,4 +40,9 @@ test('writeFreezePref round-trips', () => {
   assert.equal(readFreezePref(false, st), true)
   writeFreezePref(false, st)
   assert.equal(readFreezePref(true, st), false)
+})
+
+test('thaw window covers the d3 cooldown so a new node settles before freezing', () => {
+  const cooldownMs = (Math.log(0.001) / Math.log(1 - 0.02)) * (1000 / 60)
+  assert.ok(THAW_MS >= cooldownMs)
 })

@@ -1,6 +1,6 @@
 /**
- * "Freeze layout" state: pauses force-layout ticks and ambient canvas animation (battery on phones,
- * calm for reduced-motion users) while data, events and drawing of real changes keep flowing.
+ * "Freeze layout" state: pauses force-layout ticks only (battery on phones, calm for
+ * reduced-motion users). Ambient animation (thinking pulse, tool timers, bubble fades), data and events keep flowing.
  *
  * Effective frozen = (user toggle OR phone auto-freeze) AND not inside a brief thaw window.
  * The state lives in a plain object so the rAF loops can read it without React renders.
@@ -15,8 +15,11 @@ export interface FreezeState {
 }
 
 export const FREEZE_STORAGE_KEY = 'agent-flow:freeze-layout'
-/** How long the layout runs after a node is added or the session changes. */
-export const THAW_MS = 3000
+/**
+ * How long the layout runs after a node is added or the session changes. Must cover the d3 cooldown:
+ * ln(alphaMin / 1) / ln(1 - alphaDecay) = ln(0.001) / ln(0.98) ~ 342 ticks ~ 5.7s at 60fps.
+ */
+export const THAW_MS = 6000
 /** Phones: freeze this long after the last node add / session switch. */
 export const AUTO_FREEZE_DELAY_MS = 5000
 

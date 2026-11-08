@@ -30,7 +30,6 @@ import { useCanvasCamera } from '@/hooks/use-canvas-camera'
 import { useCanvasInteraction } from '@/hooks/use-canvas-interaction'
 import { frameDriver, wakeFrames, cappedDpr, PERF_STATS_ENABLED, type FrameMode } from '@/lib/frame-driver'
 import { prefersReducedMotion, subscribeReducedMotion } from '@/lib/reduced-motion'
-import { isLayoutFrozen, type FreezeState } from '@/lib/layout-freeze'
 import { nextRunningAgentId, ZOOM_STEP, type ViewCommand } from '@/lib/view-commands'
 import { DIM_EASE_RATE, NODE_SIZE_EASE_RATE, REDUCED_MOTION_EASE_MULTIPLIER } from '@/lib/canvas-constants'
 
@@ -60,14 +59,12 @@ interface CanvasProps {
   ariaLabel?: string
   /** One-shot camera command from the on-screen view controls */
   viewCommand?: ViewCommand | null
-  /** Freeze-layout state (read per frame): pauses ambient animation and particles */
-  freezeRef?: React.RefObject<FreezeState>
 }
 
 export function AgentCanvas({
   simulationRef,
   selectedAgentId, hoveredAgentId, showStats, showHexGrid, zoomToFitTrigger, pauseAutoFit,
-  onAgentClick, onAgentOpen, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished, ariaLabel, viewCommand, freezeRef,
+  onAgentClick, onAgentOpen, onAgentHover, onAgentDrag, onContextMenu, onToolCallClick, selectedToolCallId, onDiscoveryClick, selectedDiscoveryId, showCostOverlay, showFinished, ariaLabel, viewCommand,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mainCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -371,15 +368,15 @@ export function AgentCanvas({
         seen.stats = showStats; seen.hex = showHexGrid; seen.cost = showCostOverlay
         settleUntilRef.current = timestamp + 700
       }
-      // Subtle ambient animation (pulsing active agents, bubble/tool timers); paused while the layout is frozen
-      const frozen = !!freezeRef?.current && isLayoutFrozen(freezeRef.current, timestamp)
-      let ambient = !frozen && (toolCalls.size > 0 || discoveries.length > 0)
-      if (!ambient && !frozen) {
+      // Subtle ambient animation (pulsing active agents, bubble/tool timers). Freeze is layout-only
+      // (force ticks stop in the simulation), so this keeps running while frozen.
+      let ambient = toolCalls.size > 0 || discoveries.length > 0
+      if (!ambient) {
         for (const a of agents.values()) {
           if (a.state === 'thinking' || a.state === 'tool_calling' || a.state === 'waiting_permission' || a.messageBubbles.length > 0) { ambient = true; break }
         }
       }
-      const busyFull = (!frozen && particles.length > 0) || effectsRef.current.length > 0 || timestamp < settleUntilRef.current
+      const busyFull = particles.length > 0 || effectsRef.current.length > 0 || timestamp < settleUntilRef.current
       if (!changed && !ambient && !busyFull) return 'idle'
       timeRef.current += deltaTime
 
@@ -496,7 +493,7 @@ export function AgentCanvas({
       dimEaseMapRef.current.sweep()
       sizeEaseMapRef.current.sweep()
       if (showCostOverlay) drawCostLabels(ctx, agents, toolCalls)
-      if (!frozen) drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)
+      drawParticles(ctx, particles, edgeMap, agents, toolCalls, timeRef.current)
       drawEffects(ctx, effectsRef.current)
 
       if (selectedAgentId) {
@@ -556,7 +553,7 @@ export function AgentCanvas({
       }
       return 'slow'
     }
-  }, [detectStateChanges, updateCamera, updateDragLerp, transformRef, simulationRef, freezeRef])
+  }, [detectStateChanges, updateCamera, updateDragLerp, transformRef, simulationRef])
 
   drawRef.current = draw
 
