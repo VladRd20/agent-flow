@@ -195,6 +195,29 @@ function drawStateRing(ctx: CanvasRenderingContext2D, agent: Agent, r: number, g
   ctx.lineDashOffset = 0
 }
 
+/** Secondary, non-colour "finished" cue: a small check badge on the node's upper-right rim. */
+function drawCompleteBadge(ctx: CanvasRenderingContext2D, agent: Agent, r: number) {
+  const br = Math.max(4, r * 0.3)
+  const bx = agent.x + r * 0.78
+  const by = agent.y - r * 0.78
+  ctx.save()
+  ctx.fillStyle = COLORS.panelBg
+  ctx.strokeStyle = COLORS.complete
+  ctx.lineWidth = 1.4
+  ctx.beginPath()
+  ctx.arc(bx, by, br, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  ctx.moveTo(bx - br * 0.45, by)
+  ctx.lineTo(bx - br * 0.1, by + br * 0.38)
+  ctx.lineTo(bx + br * 0.5, by - br * 0.35)
+  ctx.stroke()
+  ctx.restore()
+}
+
 /** Extra pulsing outer ring for error state — layered on top of the normal
  *  (now group-colored) ring so a failing node still reads unmistakably as
  *  "error" at a glance, even though the base ring no longer hard-codes the
@@ -479,6 +502,7 @@ export function drawAgents(
     drawStateRing(ctx, agent, r, groupColor, isHovered, isSelected, isWaiting, time)
     if (agent.state === 'error') drawErrorAlertRing(ctx, agent, r, time)
     drawCenterIcon(ctx, agent, r, groupColor, stateColor, isWaiting)
+    if (agent.state === 'complete') drawCompleteBadge(ctx, agent, r)
 
     if (agent.state === 'thinking') {
       drawOrbitingParticles(ctx, agent, r, stateColor, time)

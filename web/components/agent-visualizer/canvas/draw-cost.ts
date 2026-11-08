@@ -1,6 +1,6 @@
 import type { UsageLedger } from '@/hooks/simulation/usage-ledger'
 import { Agent, ToolCallNode, NODE } from '@/lib/agent-types'
-import { COLORS } from '@/lib/colors'
+import { COLORS, getAgentGroupColor, getModelFamily } from '@/lib/colors'
 import { FONT, COST_RATE, MODEL_FAMILY_COST, COST_DRAW, COST_PANEL, MIN_VISIBLE_OPACITY } from '@/lib/canvas-constants'
 import { formatTokens } from '@/lib/utils'
 import { truncateText } from './draw-misc'
@@ -217,6 +217,53 @@ export function ledgerBreakdown(
   return { agentBreakdown, rows, rest, totalTokens, totalCost, toolList }
 }
 
+/** Non-colour status cue for a cost row: pulsing dot (running), check (complete), dash (removed). */
+export function drawStatusGlyph(
+  ctx: CanvasRenderingContext2D,
+  status: CostRowStatus,
+  cx: number,
+  cy: number,
+  size: number,
+  now: number = 0,
+) {
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  if (status === 'running') {
+    const pulse = 0.5 + 0.5 * Math.sin(now / 350)
+    ctx.fillStyle = COLORS.idle
+    ctx.globalAlpha = 0.2 + 0.25 * pulse
+    ctx.beginPath()
+    ctx.arc(cx, cy, size * (0.8 + 0.2 * pulse), 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+    ctx.beginPath()
+    ctx.arc(cx, cy, size * 0.5, 0, Math.PI * 2)
+    ctx.fill()
+  } else if (status === 'complete') {
+    ctx.strokeStyle = COLORS.complete
+    ctx.lineWidth = 1.6
+    ctx.beginPath()
+    ctx.moveTo(cx - size * 0.6, cy)
+    ctx.lineTo(cx - size * 0.15, cy + size * 0.5)
+    ctx.lineTo(cx + size * 0.65, cy - size * 0.5)
+    ctx.stroke()
+  } else {
+    ctx.strokeStyle = COLORS.textMuted
+    ctx.lineWidth = 1.6
+    ctx.beginPath()
+    ctx.moveTo(cx - size * 0.5, cy)
+    ctx.lineTo(cx + size * 0.5, cy)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/** Short model-family tag for a cost row (opus / sonnet / haiku / gpt ...), or null when unknown. */
+export function modelTag(model?: string): string | null {
+  return getModelFamily(model)
+}
+
 export function drawCostSummaryPanel(
   ctx: CanvasRenderingContext2D,
   ledger: UsageLedger,
@@ -293,18 +340,43 @@ export function drawCostSummaryPanel(
     ctx.roundRect(panelX + COST_PANEL.contentPadding, y + 1, barW * ratio, lineH - 3, COST_PANEL.barRadius)
     ctx.fill()
 
-    // Agent name
-    ctx.font = FONT.mono(9 + fs)
-    ctx.fillStyle = COLORS.textPrimary
+    // Status glyph (non-colour cue) + agent name + model tag + cost
+    const rowFont = narrow ? 11 : 9
+    const rowMid = y + 1 + (lineH - 3) / 2
+    const barLeft = panelX + COST_PANEL.contentPadding + COST_PANEL.barInset
+    const barRight = panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset
+    const isRest = i >= rows.length
+    const status: CostRowStatus = isRest ? 'removed' : rows[i].status
+    const model = isRest ? undefined : rows[i].model
+    if (i > 0 && status !== 'running' && rows[i - 1]?.status === 'running') {
+      ctx.fillStyle = COLORS.glassBorder
+      ctx.fillRect(panelX + COST_PANEL.contentPadding, y - 2, barW, 1)
+    }
+    drawStatusGlyph(ctx, status, barLeft + 4, rowMid, narrow ? 4 : 3, performance.now())
+
+    ctx.font = FONT.mono(rowFont)
+    const costText = `$${a.cost.toFixed(3)}`
+    const costW = ctx.measureText(costText).width
+    const tag = modelTag(model)
+    ctx.font = FONT.mono(rowFont - 1, 'bold')
+    const tagW = tag ? ctx.measureText(tag).width : 0
+    const nameX = barLeft + 14
+    const nameMax = barRight - costW - (tag ? tagW + 6 : 0) - 8 - nameX
+
+    ctx.font = FONT.mono(rowFont)
+    ctx.fillStyle = status === 'running' ? COLORS.textPrimary : COLORS.textMuted
     ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
-    const rowMid = y + 1 + (lineH - 3) / 2
-    ctx.fillText(truncateText(ctx, a.name, barW - 60), panelX + COST_PANEL.contentPadding + COST_PANEL.barInset, rowMid)
+    ctx.fillText(truncateText(ctx, a.name, Math.max(20, nameMax)), nameX, rowMid)
 
-    // Cost
     ctx.textAlign = 'right'
     ctx.fillStyle = COLORS.costText
-    ctx.fillText(`$${a.cost.toFixed(3)}`, panelX + COST_PANEL.contentPadding + barW - COST_PANEL.barInset, rowMid)
+    ctx.fillText(costText, barRight, rowMid)
+    if (tag) {
+      ctx.font = FONT.mono(rowFont - 1, 'bold')
+      ctx.fillStyle = getAgentGroupColor({ isMain: false, model })
+      ctx.fillText(tag, barRight - costW - 6, rowMid)
+    }
     ctx.textBaseline = 'top'
 
     y += lineH

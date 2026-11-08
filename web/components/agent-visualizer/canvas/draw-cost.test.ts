@@ -43,3 +43,10 @@ test('running agents sort before finished ones; overflow joins the reconciling r
   assert.equal(b.rest?.label, 'Other + finished agents')
   assert.equal(b.rest?.count, 1)
 })
+
+test('modelTag resolves the model family', async () => {
+  const { modelTag } = await import('./draw-cost')
+  assert.equal(modelTag('claude-opus-4-7'), 'opus')
+  assert.equal(modelTag('claude-haiku-4-5'), 'haiku')
+  assert.equal(modelTag(undefined), null)
+})
