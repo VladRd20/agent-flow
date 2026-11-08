@@ -117,8 +117,15 @@ const keepOuts = new Map<string, KeepOutRect>()
 let keepOutList: KeepOutRect[] = []
 
 export function setKeepOut(key: string, rect: KeepOutRect | null): void {
-  if (rect && rect.w > 0 && rect.h > 0) keepOuts.set(key, rect)
-  else keepOuts.delete(key)
+  const prev = keepOuts.get(key)
+  if (rect && rect.w > 0 && rect.h > 0) {
+    // Callers re-measure on every DOM mutation; an unchanged rect must not wake the frame loop.
+    if (prev && prev.x === rect.x && prev.y === rect.y && prev.w === rect.w && prev.h === rect.h) return
+    keepOuts.set(key, rect)
+  } else {
+    if (!prev) return
+    keepOuts.delete(key)
+  }
   keepOutList = [...keepOuts.values()]
   wakeFrames()
 }
