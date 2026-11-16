@@ -401,6 +401,23 @@ function readNewLines(sessionId: string) {
   resetInactivityTimer(sessionId)
 }
 
+/** Closes every watcher/timer a session owns (transcript, subagent files, subagents dir)
+ *  and drops its parser-side bookkeeping, so a pruned session can be garbage collected. */
+function releaseSessionResources(session: WatchedSession) {
+  session.fileWatcher?.close()
+  if (session.pollTimer) clearInterval(session.pollTimer)
+  if (session.inactivityTimer) clearTimeout(session.inactivityTimer)
+  if (session.permissionTimer) clearTimeout(session.permissionTimer)
+  for (const sub of session.subagentWatchers.values()) {
+    sub.watcher?.close()
+    if (sub.permissionTimer) clearTimeout(sub.permissionTimer)
+  }
+  session.subagentWatchers.clear()
+  session.subagentsDirWatcher?.close()
+  session.subagentsDirWatcher = null
+  parser.clearSessionState(session.pendingToolCalls.keys(), session.sessionId)
+}
+
 // Drops sessions that finished (sessionCompleted) more than
 // SESSION_RETENTION_MS ago from `sessions`/`eventBuffer` — otherwise every
 // session ever watched during this process's lifetime stays in the SSE
@@ -412,9 +429,7 @@ function pruneOldSessions() {
     if (!session.sessionCompleted) continue
     if (now - session.lastActivityTime < SESSION_RETENTION_MS) continue
 
-    session.fileWatcher?.close()
-    if (session.pollTimer) clearInterval(session.pollTimer)
-    if (session.inactivityTimer) clearTimeout(session.inactivityTimer)
+    releaseSessionResources(session)
     sessions.delete(sessionId)
     eventBuffer.delete(sessionId)
     log(`[session] Pruned ${sessionId.slice(0, SESSION_ID_DISPLAY)} (idle since completion > ${SESSION_RETENTION_MS}ms)`)
@@ -744,11 +759,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         if (scanInterval) clearInterval(scanInterval)
         if (pruneInterval) clearInterval(pruneInterval)
         projectDirWatcher?.close()
-        for (const session of sessions.values()) {
-          session.fileWatcher?.close()
-          if (session.pollTimer) clearInterval(session.pollTimer)
-          if (session.inactivityTimer) clearTimeout(session.inactivityTimer)
-        }
+        for (const session of sessions.values()) releaseSessionResources(session)
       }
       codexWatcher?.dispose()
     },
