@@ -124,8 +124,11 @@ export function SessionTabs({
               >
                 <span
                   className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  aria-hidden="true"
                   style={{
-                    background: anyActive ? COLORS.complete : COLORS.idle + '40',
+                    background: anyActive ? COLORS.complete : 'transparent',
+                    border: anyActive ? 'none' : `1px solid ${COLORS.idle}99`,
+                    boxSizing: 'border-box',
                     boxShadow: anyActive ? `0 0 4px ${COLORS.complete}` : 'none',
                   }}
                 />
@@ -150,7 +153,8 @@ export function SessionTabs({
           // Close is hover-revealed on desktop; touch has no hover, so show it on the selected tab
           const closeVisibility = isMobile
             ? (isSelected ? 'opacity-70' : 'hidden')
-            : 'opacity-0 group-hover:opacity-60 focus-visible:opacity-100'
+            // af-tab-close: globals.css shows it wherever hover is unavailable (touch tablets)
+            : `af-tab-close ${isSelected ? 'opacity-70' : 'opacity-0 group-hover:opacity-60'} focus-visible:opacity-100`
           return (
             <div
               key={session.id}
@@ -167,6 +171,7 @@ export function SessionTabs({
                 type="button"
                 role="tab"
                 aria-selected={isSelected}
+                aria-label={`${session.label}, ${isActive ? 'running' : hasActivity ? 'new activity' : 'idle'}`}
                 data-tab-id={session.id}
                 tabIndex={focusableId === session.id ? 0 : -1}
                 onClick={() => onSelectSession(session.id)}
@@ -175,8 +180,12 @@ export function SessionTabs({
               >
                 <span
                   className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  aria-hidden="true"
                   style={{
-                    background: showGreen ? COLORS.complete : COLORS.idle + '40',
+                    // Filled dot = running / new activity; hollow ring = idle (not colour alone)
+                    background: showGreen ? COLORS.complete : 'transparent',
+                    border: showGreen ? 'none' : `1px solid ${COLORS.idle}99`,
+                    boxSizing: 'border-box',
                     boxShadow: showGreen ? `0 0 4px ${COLORS.complete}` : 'none',
                     animation: hasActivity && !isSelected ? 'pulse 1.5s infinite' : 'none',
                   }}
@@ -200,7 +209,7 @@ export function SessionTabs({
           )
         })}
       </div>
-      {isMobile && nextRunningId && (
+      {(isMobile || fade !== 'none') && nextRunningId && (
         <button
           type="button"
           onClick={() => onSelectSession(nextRunningId)}

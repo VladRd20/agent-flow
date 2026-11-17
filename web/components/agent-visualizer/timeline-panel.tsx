@@ -8,11 +8,13 @@ import { pickMarkerInterval, formatMarker } from '@/lib/timeline-markers'
 import { PanelHeader, SlidingPanel } from './shared-ui'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 import { cappedDpr } from '@/lib/frame-driver'
+import { useSimClock, type SimClock } from '@/lib/sim-clock'
 
 interface TimelinePanelProps {
   visible: boolean
   timelineEntries: Map<string, TimelineEntry>
-  currentTime: number
+  /** Idle-aware sim clock; only subscribed to while the panel is visible */
+  clock: SimClock
   onClose: () => void
 }
 
@@ -198,7 +200,8 @@ function drawTimeline(
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-function TimelinePanelImpl({ visible, timelineEntries, currentTime, onClose }: TimelinePanelProps) {
+function TimelinePanelImpl({ visible, timelineEntries, clock, onClose }: TimelinePanelProps) {
+  const { currentTime } = useSimClock(clock, visible)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const isMobile = useIsMobile()
   const metrics = isMobile ? MOBILE_METRICS : DESKTOP_METRICS

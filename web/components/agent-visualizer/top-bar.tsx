@@ -11,6 +11,8 @@ import { useClickOutside } from "@/hooks/use-click-outside"
 import { useEscapeKey } from "@/hooks/use-escape-key"
 import { getBottomInset } from "@/lib/layout-insets"
 import { useTopChromeInset } from "@/hooks/use-top-chrome-inset"
+import { useOfflineVisible } from "@/hooks/use-offline-visible"
+import type { AgentStatusSummary } from "@/lib/agent-status-summary"
 
 // ─── Mute/Unmute SVG Icons ───────────────────────────────────────────────────
 
@@ -101,6 +103,56 @@ function ConnectionDot({ status }: { status: ConnectionStatus }) {
   )
 }
 
+/** Short text pill for the cramped mobile bar. The live region stays mounted so the change is announced. */
+function OfflinePill({ status }: { status: ConnectionStatus }) {
+  const offline = useOfflineVisible(status)
+  return (
+    <span aria-live="polite" className="flex-shrink-0">
+      {offline && (
+        <span
+          className="inline-block rounded px-1.5 py-0.5 whitespace-nowrap"
+          style={{ color: COLORS.error, background: `${COLORS.error}1f`, border: `1px solid ${COLORS.error}66` }}
+        >
+          Offline · retrying
+        </span>
+      )}
+    </span>
+  )
+}
+
+/** "3 active · 1 waiting · 1 error": counts as text, warning/error colours are secondary to the words. */
+function StatusSummary({ summary, onSelectAgent }: {
+  summary: AgentStatusSummary
+  onSelectAgent: (id: string) => void
+}) {
+  const { active, waiting, error, firstWaitingId } = summary
+  if (active + waiting + error === 0) return null
+  const parts: React.ReactNode[] = []
+  if (active > 0) parts.push(<span key="active">{active} active</span>)
+  if (waiting > 0) {
+    const label = `${waiting} waiting`
+    parts.push(firstWaitingId ? (
+      <button
+        key="waiting"
+        type="button"
+        onClick={() => onSelectAgent(firstWaitingId)}
+        aria-label={`${label} for permission. Select the first one`}
+        title="Select the first agent waiting for permission"
+        className="af-hit underline decoration-dotted underline-offset-2"
+        style={{ color: COLORS.waiting_permission }}
+      >
+        <span aria-hidden="true">⚠ </span>{label}
+      </button>
+    ) : <span key="waiting" style={{ color: COLORS.waiting_permission }}>⚠ {label}</span>)
+  }
+  if (error > 0) parts.push(<span key="error" style={{ color: COLORS.error }}><span aria-hidden="true">✕ </span>{error} error{error === 1 ? '' : 's'}</span>)
+  return (
+    <span className="whitespace-nowrap" aria-label="Agent status">
+      {parts.map((p, i) => <span key={i}>{i > 0 && <span aria-hidden="true" style={{ opacity: 0.6 }}> · </span>}{p}</span>)}
+    </span>
+  )
+}
+
 // ─── Top Bar ────────────────────────────────────────────────────────────────
 
 export interface TopBarProps {
@@ -115,6 +167,10 @@ export interface TopBarProps {
   connectionStatus: ConnectionStatus
   // Stats
   agentCount: number
+  /** Active / waiting / error counts for the selected session's agents */
+  statusSummary: AgentStatusSummary
+  /** Select an agent on the canvas (used by the "waiting" segment) */
+  onSelectAgent: (id: string) => void
   /** Hidden (finished, not yet expired) agents available as ghosts */
   finishedCount: number
   showFinished: boolean
@@ -145,7 +201,7 @@ function DesktopTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
   connectionStatus,
-  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens, totalCost,
+  agentCount, statusSummary, onSelectAgent, finishedCount, showFinished, onToggleFinished, totalTokens, totalCost,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
@@ -180,6 +236,7 @@ function DesktopTopBar({
           {agentCount} agents
           {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
         </span>
+        <StatusSummary summary={statusSummary} onSelectAgent={onSelectAgent} />
         <CostChip cost={totalCost} tokens={totalTokens} active={showCostOverlay} onToggle={() => onTogglePanel('cost')} />
         <CostLiveSummary cost={totalCost} tokens={totalTokens} />
 
@@ -219,7 +276,7 @@ function MobileTopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
   connectionStatus,
-  agentCount, finishedCount, showFinished, onToggleFinished, totalTokens, totalCost,
+  agentCount, statusSummary, onSelectAgent, finishedCount, showFinished, onToggleFinished, totalTokens, totalCost,
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
@@ -267,6 +324,7 @@ function MobileTopBar({
       <div ref={menuRef} className="relative flex-shrink-0 flex items-center gap-2 ml-auto pointer-events-auto">
         <CostChip compact cost={totalCost} tokens={totalTokens} active={showCostOverlay} onToggle={() => onTogglePanel('cost')} />
         <CostLiveSummary cost={totalCost} tokens={totalTokens} />
+        <OfflinePill status={connectionStatus} />
         <ConnectionDot status={connectionStatus} />
         <button
           type="button"
@@ -316,6 +374,9 @@ function MobileTopBar({
                 {agentCount} agents
                 {finishedCount > 0 && <span style={{ opacity: 0.6, marginLeft: 4 }}>+{finishedCount} finished</span>}
               </span>
+            </div>
+            <div className="px-1 pb-1" style={{ color: COLORS.textMuted, gridColumn: '1 / -1' }}>
+              <StatusSummary summary={statusSummary} onSelectAgent={(id) => { onSelectAgent(id); closeMenu() }} />
             </div>
 
             <MobileMenuToggle label="Files" active={showFileAttention} onClick={() => { onTogglePanel('files'); closeMenu() }} />

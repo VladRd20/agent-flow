@@ -18,6 +18,7 @@ import { createEmptyState, MAX_EVENT_LOG } from './simulation/types'
 import { processEvent, foldEvents, VISUAL_LIFETIME_S, HISTORICAL_BATCH_MIN, type ProcessEventContext } from './simulation/process-event'
 import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
+import { createSimClock } from '@/lib/sim-clock'
 import { shouldCommitFrame } from './simulation/ui-throttle'
 import { buildForceConfig, type ForceConfig } from './simulation/force-config'
 import { onViewAspectChange } from '@/lib/view-aspect'
@@ -43,12 +44,15 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   // Canvas reads from frameRef directly for 60fps rendering.
   const [state, setState] = useState<SimulationState>(createEmptyState)
   const frameRef = useRef<SimulationState>(createEmptyState())
+  // Time readout store: the idle 1 Hz heartbeat publishes here instead of committing root state
+  const [clock] = useState(() => createSimClock())
 
   /** Update both frameRef and React state (triggers UI re-render) */
   const commitState = useCallback((next: SimulationState) => {
     frameRef.current = next
     setState(next)
-  }, [])
+    clock.publish(next.currentTime, next.maxTimeReached)
+  }, [clock])
 
   const lastTimeRef = useRef<number>(0)
   const forceSimRef = useRef<Simulation<ForceNode, ForceLink> | null>(null)
@@ -364,6 +368,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       lastCommittedTime: lastUITimeRef.current,
     })) {
       setState(frameRef.current)
+      clock.publish(result.currentTime, frameRef.current.maxTimeReached)
       lastUIUpdateRef.current = timestamp
       lastUITimeRef.current = result.currentTime
     }
@@ -386,6 +391,7 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     // Settling into idle: flush one final UI commit so throttled-away state
     // (last events, final clock value) reaches React before the loop stops.
     setState(frameRef.current)
+    clock.publish(result.currentTime, frameRef.current.maxTimeReached)
     lastUIUpdateRef.current = timestamp
     lastUITimeRef.current = result.currentTime
     return 'idle'
@@ -419,6 +425,8 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     if (!state.isPlaying || useMockData) return
     let last = performance.now()
     const id = setInterval(() => {
+      // Hidden tab: skip entirely (last stays put, so the next visible tick catches up, capped at 60 s)
+      if (typeof document !== 'undefined' && document.hidden) return
       const now = performance.now()
       const dt = Math.min((now - last) / 1000, 60)
       last = now
@@ -427,10 +435,11 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
       if (!cur.isPlaying) return
       const t = cur.currentTime + dt * cur.speed
       frameRef.current = { ...cur, currentTime: t, maxTimeReached: Math.max(cur.maxTimeReached, t) }
-      setState(frameRef.current)
+      // Only the time readout subscribes to this; the visualizer root is not re-rendered
+      clock.publish(t, frameRef.current.maxTimeReached)
     }, 1000)
     return () => clearInterval(id)
-  }, [state.isPlaying, useMockData])
+  }, [state.isPlaying, useMockData, clock])
 
   // New external events must wake an idle driver.
   useEffect(() => { wakeFrames() }, [externalEvents, state.speed])
@@ -606,8 +615,9 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     discoveries: state.discoveries,
     fileAttention: state.fileAttention,
     timelineEntries: state.timelineEntries,
-    currentTime: state.currentTime, isPlaying: state.isPlaying, speed: state.speed,
-    maxTimeReached: state.maxTimeReached,
+    // Time lives in `clock` (read via useSimClock / frameRef), not in root state
+    clock,
+    isPlaying: state.isPlaying, speed: state.speed,
     conversations: state.conversations,
     play, pause, restart, setSpeed, seekToTime,
     updateAgentPosition,
