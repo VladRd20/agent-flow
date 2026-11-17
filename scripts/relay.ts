@@ -14,7 +14,8 @@ import { SeqAssigner, resolveSince, firstIndexAfter, trimEventBuffer } from './r
 import { buildContextPayload } from '../extension/src/context-usage'
 import { TranscriptParser } from '../extension/src/transcript-parser'
 import { readNewFileLines, foldPathCase } from '../extension/src/fs-utils'
-import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime } from '../extension/src/subagent-watcher'
+import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime, clearSubagentTimers } from '../extension/src/subagent-watcher'
+import { StaleSessionMemo, shouldWatchSession, UnwatchedTracker, WarnLimiter } from './relay-guards'
 import { followSession } from '../extension/src/session-relocation'
 import { handlePermissionDetection } from '../extension/src/permission-detection'
 import { CodexSessionWatcher } from '../extension/src/codex-session-watcher'
@@ -43,6 +44,9 @@ const seqAssigner = new SeqAssigner()
 const RELAY_SCAN_INTERVAL_MS = 5000
 /** Coalesce the several fs.watch change events Windows fires per write. */
 const WATCH_DEBOUNCE_MS = 75
+/** The old-worktree subagent-folder search (readdir of the projects root) runs at most this often per session. */
+const EXTRA_SUBAGENT_DIRS_INTERVAL_MS = 30_000
+const UNWATCHED_SWEEP_INTERVAL_MS = 60_000
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow')
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects')
 
@@ -108,7 +112,20 @@ function broadcast(data: string) {
 const EVENT_BUFFER_TRIM_SLACK = 2000
 const eventBuffer = new Map<string, AgentEvent[]>()
 
-function broadcastEvent(event: AgentEvent) {
+const unwatchedTracker = new UnwatchedTracker()
+const staleMemo = new StaleSessionMemo()
+const warnLimiter = new WarnLimiter()
+
+/** console.warn at most once per session per minute. */
+function warnLimited(sessionId: string, what: string, err: unknown) {
+  if (warnLimiter.shouldWarn(sessionId, Date.now())) {
+    console.warn(`[relay] ${what} failed (session ${sessionId.slice(0, SESSION_ID_DISPLAY)}):`, err)
+  }
+}
+
+/** `fromHook`: the event came from the hook server. Hook events for a session that has no
+ *  transcript watcher are never replayed, so their buffer is capped and expires (see UnwatchedTracker). */
+function broadcastEvent(event: AgentEvent, fromHook = false) {
   sessionEventCount++
   if (event.sessionId) event = { ...event, seq: seqAssigner.next(event.sessionId) }
   if (event.type === 'model_detected') {
@@ -131,8 +148,13 @@ function broadcastEvent(event: AgentEvent) {
       eventBuffer.set(event.sessionId, buf)
     }
     buf.push(event)
-    // Amortised: trim in batches, keeping structural events (see trimEventBuffer)
-    if (buf.length > MAX_EVENT_BUFFER + EVENT_BUFFER_TRIM_SLACK) trimEventBuffer(buf, MAX_EVENT_BUFFER)
+    if (fromHook && !sessions.has(event.sessionId)) {
+      unwatchedTracker.touch(event.sessionId, Date.now())
+      UnwatchedTracker.cap(buf)
+    } else if (buf.length > MAX_EVENT_BUFFER + EVENT_BUFFER_TRIM_SLACK) {
+      // Amortised: trim in batches, keeping structural events (see trimEventBuffer)
+      trimEventBuffer(buf, MAX_EVENT_BUFFER)
+    }
   }
 
   broadcast(JSON.stringify({ type: 'agent-event', event }))
@@ -326,7 +348,22 @@ async function watchSession(sessionId: string, filePath: string): Promise<void> 
     contextBreakdown: { systemPrompt: SYSTEM_PROMPT_BASE_TOKENS, userMessages: 0, toolResults: 0, reasoning: 0, subagentResults: 0 },
   }
   sessions.set(sessionId, session)
+  try {
+    await attachSession(sessionId, filePath, session)
+  } catch (err) {
+    // Release whatever was set up and forget the entry so the next scan retries
+    // (otherwise the zombie entry blocks retries and is never pruned).
+    releaseSessionResources(session)
+    if (sessions.get(sessionId) === session) sessions.delete(sessionId)
+    console.warn(`[relay] Failed to attach session ${sessionId.slice(0, SESSION_ID_DISPLAY)}; will retry on next scan:`, err)
+  }
+}
 
+/** Test seam: lets tests inject a failure into the attach step. Not used in production. */
+export const relayTestHooks: { beforeAttach?: (sessionId: string) => void; beforeLine?: (line: string) => void } = {}
+
+async function attachSession(sessionId: string, filePath: string, session: WatchedSession): Promise<void> {
+  relayTestHooks.beforeAttach?.(sessionId)
   const stat = fs.statSync(filePath)
   // Async + chunked so a huge transcript does not freeze SSE/timers; live tailing starts after the scan.
   const catchUpEntries = await parser.prescanExistingContentAsync(filePath, stat.size, session, {
@@ -357,24 +394,40 @@ async function watchSession(sessionId: string, filePath: string): Promise<void> 
     if (eventType !== 'change') return
     lastWatchEvent = Date.now()
     if (debounce) return
-    debounce = setTimeout(() => { debounce = null; readNewLines(sessionId) }, WATCH_DEBOUNCE_MS)
+    debounce = setTimeout(() => {
+      debounce = null
+      try { readNewLines(sessionId) } catch (err) { warnLimited(sessionId, 'Transcript read', err) }
+    }, WATCH_DEBOUNCE_MS)
   })
   session.fileWatcher = watchTranscript()
 
+  let lastExtraDirsScan = 0
   session.pollTimer = setInterval(() => {
-    // Entering a worktree moves the transcript to another project folder
-    if (followSession(watcherDelegate, parser, session, CLAUDE_DIR)) {
-      log(`[session] ${sessionId.slice(0, SESSION_ID_DISPLAY)} moved to ${session.filePath}`)
-      session.fileWatcher?.close()
-      try { session.fileWatcher = watchTranscript() } catch {}
-    }
-    // Fallback only: skip the reads when fs.watch fired within the last interval.
-    if (Date.now() - lastWatchEvent < POLL_FALLBACK_MS) return
-    // readNewLines already rescans the subagents dir
-    readNewLines(sessionId)
-    for (const [subPath] of session.subagentWatchers) {
-      readSubagentNewLines(watcherDelegate, parser, subPath, sessionId)
-    }
+    try {
+      // Completed sessions: only check whether the transcript moved (one existsSync).
+      // A resumed session is revived by the transcript/subagent fs.watch handlers and
+      // the main-file read below, which call resetInactivityTimer (clears sessionCompleted).
+      const completed = session.sessionCompleted
+      const now = Date.now()
+      if (!completed || !fs.existsSync(session.filePath)) {
+        const scanExtra = !completed && now - lastExtraDirsScan >= EXTRA_SUBAGENT_DIRS_INTERVAL_MS
+        if (scanExtra) lastExtraDirsScan = now
+        // Entering a worktree moves the transcript to another project folder
+        if (followSession(watcherDelegate, parser, session, CLAUDE_DIR, scanExtra)) {
+          log(`[session] ${sessionId.slice(0, SESSION_ID_DISPLAY)} moved to ${session.filePath}`)
+          session.fileWatcher?.close()
+          try { session.fileWatcher = watchTranscript() } catch {}
+        }
+      }
+      // Fallback only: skip the reads when fs.watch fired within the last interval.
+      if (now - lastWatchEvent < POLL_FALLBACK_MS) return
+      // readNewLines already rescans the subagents dir
+      readNewLines(sessionId)
+      if (session.sessionCompleted) return // nothing new on the main file: no subagent reads either
+      for (const [subPath] of session.subagentWatchers) {
+        readSubagentNewLines(watcherDelegate, parser, subPath, sessionId)
+      }
+    } catch (err) { warnLimited(sessionId, 'Poll', err) }
   }, POLL_FALLBACK_MS)
 
   session.subagentsDir = path.join(path.dirname(filePath), sessionId, 'subagents')
@@ -393,11 +446,16 @@ function readNewLines(sessionId: string) {
   session.fileSize = result.newSize
   session.fileTail = result.tail
   for (const line of result.lines) {
-    parser.processTranscriptLine(line, ORCHESTRATOR_NAME, session.pendingToolCalls, session.seenToolUseIds, sessionId, session.seenMessageHashes)
+    try {
+      relayTestHooks.beforeLine?.(line)
+      parser.processTranscriptLine(line, ORCHESTRATOR_NAME, session.pendingToolCalls, session.seenToolUseIds, sessionId, session.seenMessageHashes)
+    } catch (err) { warnLimited(sessionId, 'Transcript line processing', err) }
   }
 
-  handlePermissionDetection(watcherDelegate, ORCHESTRATOR_NAME, session.pendingToolCalls, session, sessionId, session.sessionCompleted, true)
-  scanSubagentsDir(watcherDelegate, parser, sessionId)
+  try {
+    handlePermissionDetection(watcherDelegate, ORCHESTRATOR_NAME, session.pendingToolCalls, session, sessionId, session.sessionCompleted, true)
+    scanSubagentsDir(watcherDelegate, parser, sessionId)
+  } catch (err) { warnLimited(sessionId, 'Post-read processing', err) }
   resetInactivityTimer(sessionId)
 }
 
@@ -412,6 +470,7 @@ function releaseSessionResources(session: WatchedSession) {
     sub.watcher?.close()
     if (sub.permissionTimer) clearTimeout(sub.permissionTimer)
   }
+  clearSubagentTimers(session)
   session.subagentWatchers.clear()
   session.subagentsDirWatcher?.close()
   session.subagentsDirWatcher = null
@@ -432,7 +491,17 @@ function pruneOldSessions() {
     releaseSessionResources(session)
     sessions.delete(sessionId)
     eventBuffer.delete(sessionId)
+    warnLimiter.forget(sessionId)
     log(`[session] Pruned ${sessionId.slice(0, SESSION_ID_DISPLAY)} (idle since completion > ${SESSION_RETENTION_MS}ms)`)
+  }
+}
+
+/** Drop buffers of hook-only sessions that never got a transcript watcher. */
+function sweepUnwatchedBuffers() {
+  for (const sid of unwatchedTracker.sweep(Date.now(), id => sessions.has(id))) {
+    eventBuffer.delete(sid)
+    seqAssigner.delete(sid)
+    log(`[buffer] Dropped un-watched hook-only session ${sid.slice(0, SESSION_ID_DISPLAY)}`)
   }
 }
 
@@ -468,20 +537,20 @@ function scanForActiveSessions(workspace: string) {
       for (const file of fs.readdirSync(dirPath)) {
         if (!file.endsWith('.jsonl')) continue
         const filePath = path.join(dirPath, file)
-        const stat = fs.statSync(filePath)
         const sessionId = path.basename(file, '.jsonl')
+        // Already watched: nothing to do (and no stat / subagent walk).
+        if (sessions.has(sessionId)) continue
+        const stat = fs.statSync(filePath)
 
         // Subagent writes (including nested workflows/wf_*/ files) keep a
-        // session alive when the main JSONL is stale. Only walk the tree when
-        // the main file alone doesn't qualify.
-        let newestMtime = stat.mtimeMs
-        if ((Date.now() - newestMtime) / 1000 > ACTIVE_SESSION_AGE_S) {
-          const subMtime = newestSubagentMtime(path.join(dirPath, sessionId, 'subagents'))
-          if (subMtime > newestMtime) newestMtime = subMtime
-        }
-
-        const ageSeconds = (Date.now() - newestMtime) / 1000
-        if (ageSeconds <= ACTIVE_SESSION_AGE_S && !sessions.has(sessionId)) {
+        // session alive when the main JSONL is stale. The tree walk is skipped
+        // for very old sessions and memoised for 60 s (see shouldWatchSession).
+        const watch = shouldWatchSession(sessionId, stat.mtimeMs, ACTIVE_SESSION_AGE_S, staleMemo, {
+          isWatched: id => sessions.has(id),
+          newestSubagentMtime: id => newestSubagentMtime(path.join(dirPath, id, 'subagents')),
+          now: Date.now,
+        })
+        if (watch) {
           watchSession(sessionId, filePath).catch(err => log(`[session] watch failed: ${err}`))
         }
       }
@@ -575,6 +644,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
   let hookServer: HookServer | null = null
   let scanInterval: NodeJS.Timeout | null = null
   let pruneInterval: NodeJS.Timeout | null = null
+  let unwatchedSweepInterval: NodeJS.Timeout | null = null
   let projectDirWatcher: fs.FSWatcher | null = null
 
   if (wantClaude) {
@@ -601,7 +671,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
       // no-ops and the real node is left looking stuck/active until the
       // (possibly lagging) transcript-driven completion catches up.
       const filtered = filterHookEvent(event)
-      if (filtered) broadcastEvent(filtered)
+      if (filtered) broadcastEvent(filtered, true)
     })
 
     writeDiscoveryFile(hookPort, workspace)
@@ -609,6 +679,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     scanForActiveSessions(workspace)
     scanInterval = setInterval(() => scanForActiveSessions(workspace), RELAY_SCAN_INTERVAL_MS)
     pruneInterval = setInterval(pruneOldSessions, SESSION_PRUNE_INTERVAL_MS)
+    unwatchedSweepInterval = setInterval(sweepUnwatchedBuffers, UNWATCHED_SWEEP_INTERVAL_MS)
 
     const resolved = (() => { try { return fs.realpathSync(workspace) } catch { return workspace } })()
     const encoded = resolved.replace(/[^a-zA-Z0-9]/g, '-')
@@ -758,6 +829,7 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         hookServer?.dispose()
         if (scanInterval) clearInterval(scanInterval)
         if (pruneInterval) clearInterval(pruneInterval)
+        if (unwatchedSweepInterval) clearInterval(unwatchedSweepInterval)
         projectDirWatcher?.close()
         for (const session of sessions.values()) releaseSessionResources(session)
       }
