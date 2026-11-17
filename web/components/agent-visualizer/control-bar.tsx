@@ -5,6 +5,7 @@ import { TimelineEvent, Z, POPUP } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 import { setBottomInset } from '@/lib/layout-insets'
+import { nextScrubberEvents, type ScrubberEventsState } from '@/lib/scrubber-events'
 import { useSimClock, type SimClock } from '@/lib/sim-clock'
 
 interface ControlBarProps {
@@ -19,6 +20,8 @@ interface ControlBarProps {
   onSpeedChange: (speed: number) => void
   onSeek?: (time: number) => void
   timelineEvents: TimelineEvent[]
+  /** Bumped when the timeline cache is reset (session switch, restart, restore) */
+  timelineEpoch?: number
   isReviewing?: boolean
   eventCount?: number
   onResumeLive?: () => void
@@ -82,14 +85,10 @@ const EventMarkers = memo(function EventMarkers({ events, totalDuration, classNa
 })
 
 /** Hook to cache the full set of timeline events (dots don't disappear when seeking backward) */
-function useScrubberEvents(timelineEvents: TimelineEvent[], totalDuration: number) {
-  const fullEventsRef = useRef<TimelineEvent[]>([])
-  if (timelineEvents.length === 0 && totalDuration < 0.1) {
-    fullEventsRef.current = []
-  } else if (timelineEvents.length >= fullEventsRef.current.length) {
-    fullEventsRef.current = timelineEvents
-  }
-  return fullEventsRef.current
+function useScrubberEvents(timelineEvents: TimelineEvent[], totalDuration: number, epoch: number) {
+  const ref = useRef<ScrubberEventsState>({ epoch, events: [] })
+  ref.current = nextScrubberEvents(ref.current, timelineEvents, totalDuration, epoch)
+  return ref.current.events
 }
 
 /**
@@ -145,10 +144,10 @@ export function ControlBar({ clock, fixedDuration, ...rest }: ControlBarProps) {
 // ─── Live Mode Control Bar ───────────────────────────────────────────────────
 
 function LiveControlBar({
-  currentTime, totalDuration, timelineEvents,
+  currentTime, totalDuration, timelineEvents, timelineEpoch = 0,
   eventCount = 0, onEnterReview, hidden,
 }: BarProps) {
-  const scrubberEvents = useScrubberEvents(timelineEvents, totalDuration)
+  const scrubberEvents = useScrubberEvents(timelineEvents, totalDuration, timelineEpoch)
   const isMobile = useIsMobile()
   const barRef = useRef<HTMLDivElement>(null)
   useBarMetrics(barRef, isMobile)
@@ -221,12 +220,12 @@ const SPEEDS = [0.5, 1, 2, 4] as const
 function ReviewControlBar({
   isPlaying, speed, currentTime, totalDuration,
   onPlayPause, onRestart, onSpeedChange, onSeek,
-  timelineEvents, isReviewing, onResumeLive, hidden,
+  timelineEvents, timelineEpoch = 0, isReviewing, onResumeLive, hidden,
 }: BarProps) {
   const barRef = useRef<HTMLDivElement>(null)
   const scrubberRef = useRef<HTMLDivElement>(null)
   const [isScrubbing, setIsScrubbing] = useState(false)
-  const scrubberEvents = useScrubberEvents(timelineEvents, totalDuration)
+  const scrubberEvents = useScrubberEvents(timelineEvents, totalDuration, timelineEpoch)
   const progress = totalDuration > 0 ? currentTime / totalDuration : 0
   const isMobile = useIsMobile()
   useBarMetrics(barRef, isMobile)

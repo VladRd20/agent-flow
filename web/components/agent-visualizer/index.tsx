@@ -539,6 +539,7 @@ export function AgentVisualizer() {
           resumeTimerRef.current = setTimeout(() => { resumeTimerRef.current = null; seekingRef.current = false }, TIMING.seekCompleteDelayMs)
         }}
         timelineEvents={timelineEvents}
+        timelineEpoch={timelineEpoch}
         isReviewing={isReviewing}
         eventCount={timelineEvents.length}
         hidden={mobileSheetOpen}

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createSimClock } from './sim-clock'
+import { createSimClock, idleTickDelta } from './sim-clock'
 
 test('publish notifies subscribers only on change', () => {
   const clock = createSimClock()
@@ -13,4 +13,11 @@ test('publish notifies subscribers only on change', () => {
   off()
   clock.publish(2, 2)
   assert.equal(n, 1)
+})
+
+test('idleTickDelta caps ordinary ticks but not the first tick after the tab was hidden', () => {
+  assert.equal(idleTickDelta(1000, false), 1)
+  assert.equal(idleTickDelta(600_000, false), 60)
+  assert.equal(idleTickDelta(600_000, true), 600)
+  assert.equal(idleTickDelta(-5, true), 0)
 })

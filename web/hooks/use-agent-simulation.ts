@@ -18,7 +18,7 @@ import { createEmptyState, MAX_EVENT_LOG } from './simulation/types'
 import { processEvent, foldEvents, VISUAL_LIFETIME_S, HISTORICAL_BATCH_MIN, type ProcessEventContext } from './simulation/process-event'
 import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
-import { createSimClock } from '@/lib/sim-clock'
+import { createSimClock, idleTickDelta } from '@/lib/sim-clock'
 import { shouldCommitFrame } from './simulation/ui-throttle'
 import { buildForceConfig, type ForceConfig } from './simulation/force-config'
 import { onViewAspectChange } from '@/lib/view-aspect'
@@ -424,11 +424,13 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
   useEffect(() => {
     if (!state.isPlaying || useMockData) return
     let last = performance.now()
+    let wasHidden = false
     const id = setInterval(() => {
-      // Hidden tab: skip entirely (last stays put, so the next visible tick catches up, capped at 60 s)
-      if (typeof document !== 'undefined' && document.hidden) return
+      // Hidden tab: skip (last stays put); the first visible tick advances by the full elapsed time
+      if (typeof document !== 'undefined' && document.hidden) { wasHidden = true; return }
       const now = performance.now()
-      const dt = Math.min((now - last) / 1000, 60)
+      const dt = idleTickDelta(now - last, wasHidden)
+      wasHidden = false
       last = now
       if (!frameDriver.isIdle) return
       const cur = frameRef.current
