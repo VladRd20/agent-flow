@@ -1,16 +1,19 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
-import { TimelineEvent, Z, POPUP, TIMING } from '@/lib/agent-types'
+import { TimelineEvent, Z, POPUP } from '@/lib/agent-types'
 import { COLORS } from '@/lib/colors'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 import { setBottomInset } from '@/lib/layout-insets'
+import { useSimClock, type SimClock } from '@/lib/sim-clock'
 
 interface ControlBarProps {
   isPlaying: boolean
   speed: number
-  currentTime: number
-  totalDuration: number
+  /** Idle-aware sim clock; only this bar re-renders on its ticks */
+  clock: SimClock
+  /** Fixed total duration (mock playback); otherwise the furthest time reached */
+  fixedDuration?: number
   onPlayPause: () => void
   onRestart: () => void
   onSpeedChange: (speed: number) => void
@@ -128,8 +131,14 @@ const barWrapperStyle = (hidden: boolean | undefined): React.CSSProperties => ({
   right: 'var(--af-edge-right)',
 })
 
-export function ControlBar(props: ControlBarProps) {
-  const { isReviewing = false } = props
+/** Resolved (numeric) props the two bar variants render from */
+type BarProps = Omit<ControlBarProps, 'clock' | 'fixedDuration'> & { currentTime: number; totalDuration: number }
+
+export function ControlBar({ clock, fixedDuration, ...rest }: ControlBarProps) {
+  const { isReviewing = false } = rest
+  const { currentTime, maxTimeReached } = useSimClock(clock)
+  const totalDuration = fixedDuration ?? Math.max(maxTimeReached, currentTime)
+  const props: BarProps = { ...rest, currentTime, totalDuration }
   return isReviewing ? <ReviewControlBar {...props} /> : <LiveControlBar {...props} />
 }
 
@@ -137,19 +146,12 @@ export function ControlBar(props: ControlBarProps) {
 
 function LiveControlBar({
   currentTime, totalDuration, timelineEvents,
-  eventCount = 0, onEnterReview, isReviewing, hidden,
-}: ControlBarProps) {
-  const [pulseOn, setPulseOn] = useState(true)
+  eventCount = 0, onEnterReview, hidden,
+}: BarProps) {
   const scrubberEvents = useScrubberEvents(timelineEvents, totalDuration)
   const isMobile = useIsMobile()
   const barRef = useRef<HTMLDivElement>(null)
   useBarMetrics(barRef, isMobile)
-
-  useEffect(() => {
-    if (isReviewing) return
-    const interval = setInterval(() => setPulseOn(p => !p), TIMING.livePulseMs)
-    return () => clearInterval(interval)
-  }, [isReviewing])
 
   return (
     <div
@@ -161,11 +163,11 @@ function LiveControlBar({
         {/* LIVE badge */}
         <div className="flex items-center gap-1.5 shrink-0">
           <span
-            className="w-2 h-2 rounded-full transition-opacity duration-500"
+            className="af-live-pulse w-2 h-2 rounded-full"
             style={{
               background: COLORS.liveDot,
-              boxShadow: pulseOn ? `0 0 8px ${COLORS.liveDot}, 0 0 16px rgba(255,68,68,0.3)` : `0 0 4px ${COLORS.liveDot}80`,
-              opacity: pulseOn ? 1 : 0.6,
+              // Base look is the bright phase; the keyframes dim it (and the reduced-motion rule stops them)
+              ['--af-live-dot' as string]: COLORS.liveDot,
             }}
           />
           <span className="text-[10px] font-mono font-semibold tracking-wider" style={{ color: COLORS.liveText }}>
@@ -220,7 +222,7 @@ function ReviewControlBar({
   isPlaying, speed, currentTime, totalDuration,
   onPlayPause, onRestart, onSpeedChange, onSeek,
   timelineEvents, isReviewing, onResumeLive, hidden,
-}: ControlBarProps) {
+}: BarProps) {
   const barRef = useRef<HTMLDivElement>(null)
   const scrubberRef = useRef<HTMLDivElement>(null)
   const [isScrubbing, setIsScrubbing] = useState(false)
@@ -317,8 +319,8 @@ function ReviewControlBar({
       }}
     >
       <div
-        className="w-full rounded-full relative transition-all duration-150 group-hover:h-2"
-        style={{ height: isScrubbing ? 8 : 4, background: COLORS.glassBorder }}
+        className={`w-full rounded-full relative transition-all duration-150 ${isScrubbing ? '' : 'h-1 group-hover:h-2 group-focus-visible:h-2'}`}
+        style={{ ...(isScrubbing ? { height: 8 } : null), background: COLORS.glassBorder }}
       >
         {/* Progress fill */}
         <div
@@ -332,18 +334,16 @@ function ReviewControlBar({
           events={scrubberEvents}
           totalDuration={totalDuration}
           eventCount={scrubberEvents.length}
-          className="opacity-60 group-hover:opacity-100 transition-opacity"
+          className="opacity-60 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity"
         />
       </div>
 
       {/* Playhead */}
       <div
-        className="absolute top-1/2 -translate-y-1/2 rounded-full transition-all duration-150 group-hover:w-4 group-hover:h-4"
+        className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-150 ${isScrubbing ? '' : 'w-3 h-3 group-hover:w-4 group-hover:h-4 group-focus-visible:w-4 group-focus-visible:h-4'}`}
         style={{
           left: `${progress * 100}%`,
-          width: isScrubbing ? 16 : 12,
-          height: isScrubbing ? 16 : 12,
-          marginLeft: isScrubbing ? -8 : -6,
+          ...(isScrubbing ? { width: 16, height: 16 } : null),
           background: COLORS.textPrimary,
           boxShadow: COLORS.scrubberHeadGlow,
         }}

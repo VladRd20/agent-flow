@@ -37,6 +37,7 @@ import { useAudioEffects } from "@/hooks/use-audio-effects"
 import type { ConversationMessage } from "@/hooks/simulation/types"
 import { buildGhostView } from "@/hooks/simulation/ghost-view"
 import { ALL_SESSIONS_ID } from "@/lib/all-sessions"
+import { createTimelineCache, mergeTimelineEvents, type TimelineCache } from "@/lib/timeline-merge"
 
 const SHOW_FINISHED_KEY = "agent-flow:show-finished"
 
@@ -61,19 +62,18 @@ export function AgentVisualizer() {
     discoveries,
     fileAttention,
     timelineEntries,
-    currentTime,
+    clock,
     isPlaying,
     speed,
-    maxTimeReached,
     conversations,
     play,
     pause,
-    restart,
+    restart: simRestart,
     setSpeed,
     seekToTime,
     updateAgentPosition,
     saveSnapshot,
-    restoreSnapshot,
+    restoreSnapshot: simRestoreSnapshot,
     relabelMains,
   } = useAgentSimulation({
     useMockData: bridge.useMockData,
@@ -130,6 +130,23 @@ export function AgentVisualizer() {
 
   const [isReviewing, setIsReviewing] = useState(false)
   const { isMuted, seekingRef, handleToggleMute } = useAudioEffects(liveAgents, toolCalls, isReviewing)
+
+  // Timeline cache: reset whenever the simulation restarts or a snapshot is restored,
+  // so a previous session's events never linger. The epoch re-runs the memo below.
+  const timelineCacheRef = useRef<TimelineCache>(createTimelineCache())
+  const [timelineEpoch, setTimelineEpoch] = useState(0)
+  const resetTimeline = useCallback(() => {
+    timelineCacheRef.current = createTimelineCache()
+    setTimelineEpoch(n => n + 1)
+  }, [])
+  const restart = useCallback((keepActive?: boolean) => {
+    resetTimeline()
+    simRestart(keepActive)
+  }, [resetTimeline, simRestart])
+  const restoreSnapshot = useCallback((snapshot: Parameters<typeof simRestoreSnapshot>[0]) => {
+    resetTimeline()
+    simRestoreSnapshot(snapshot)
+  }, [resetTimeline, simRestoreSnapshot])
 
   // Auto-play on mount
   useEffect(() => {
@@ -203,36 +220,14 @@ export function AgentVisualizer() {
     relabelMains(new Map(bridge.sessions.map(s => [s.id, s.label])))
   }, [bridge.selectedSessionId, bridge.sessions, relabelMains, liveAgents])
 
-  // Timeline events — incremental: only processes new conversation messages
-  const timelineCacheRef = useRef<{
-    counts: Map<string, number>
-    events: TimelineEvent[]
-    idCounter: number
-  }>({ counts: new Map(), events: [], idCounter: 0 })
-
+  // Timeline events — incremental: new messages tracked by id (conversations are capped),
+  // inserted in order, and the list is capped at the most recent MAX_TIMELINE_EVENTS.
   const timelineEvents = useMemo((): TimelineEvent[] => {
+    void timelineEpoch
     const cache = timelineCacheRef.current
-    let appended = false
-    for (const [agentId, msgs] of conversations) {
-      const prevLen = cache.counts.get(agentId) ?? 0
-      if (msgs.length > prevLen) {
-        for (let i = prevLen; i < msgs.length; i++) {
-          const msg = msgs[i]
-          cache.events.push({
-            id: `event-${cache.idCounter++}`,
-            type: msg.type === 'tool_call' ? 'tool_call' : msg.type === 'tool_result' ? 'tool_result' : 'message',
-            label: msg.content.slice(0, 20),
-            timestamp: msg.timestamp,
-            nodeId: agentId,
-          })
-        }
-        cache.counts.set(agentId, msgs.length)
-        appended = true
-      }
-    }
-    if (appended) cache.events.sort((a, b) => a.timestamp - b.timestamp)
-    return cache.events
-  }, [conversations])
+    // Fresh array on change so downstream memo/props see the update (cap keeps this cheap)
+    return mergeTimelineEvents(cache, conversations) ? cache.events.slice() : cache.events
+  }, [conversations, timelineEpoch])
 
   // Review mode: when in live mode and user pauses to scrub through history
 
@@ -253,11 +248,11 @@ export function AgentVisualizer() {
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleResumeLive = useCallback(() => {
     setIsReviewing(false)
-    seekToTime(maxTimeReached)
+    seekToTime(frameRef.current.maxTimeReached)
     setZoomToFitTrigger(n => n + 1)
     if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
     resumeTimerRef.current = setTimeout(() => { resumeTimerRef.current = null; play() }, TIMING.resumeLiveDelayMs)
-  }, [seekToTime, maxTimeReached, play])
+  }, [seekToTime, frameRef, play])
   useEffect(() => () => { if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current) }, [])
 
   const handleRestart = useCallback(() => {
@@ -515,11 +510,8 @@ export function AgentVisualizer() {
       <ControlBar
         isPlaying={isPlaying}
         speed={speed}
-        currentTime={currentTime}
-        totalDuration={bridge.useMockData
-          ? (isReviewing ? Math.max(maxTimeReached, currentTime) : MOCK_DURATION)
-          : Math.max(maxTimeReached, currentTime)
-        }
+        clock={clock}
+        fixedDuration={bridge.useMockData && !isReviewing ? MOCK_DURATION : undefined}
         onPlayPause={handlePlayPause}
         onRestart={handleRestart}
         onSpeedChange={setSpeed}
@@ -559,7 +551,7 @@ export function AgentVisualizer() {
       <TimelinePanel
         visible={showTimeline}
         timelineEntries={timelineEntries}
-        currentTime={currentTime}
+        clock={clock}
         onClose={closeTimeline}
       />
 
