@@ -6,6 +6,7 @@ import type { SessionInfo } from '@/lib/vscode-bridge'
 import { useIsMobile } from '@/hooks/use-is-mobile'
 import { ALL_SESSIONS_ID } from '@/lib/all-sessions'
 import { allTabLabel, nextRunningSessionId, sessionCounts } from '@/lib/session-nav'
+import { decideFade, decideOverflow, type TabFade } from '@/lib/tab-overflow'
 
 interface SessionTabsProps {
   sessions: SessionInfo[]
@@ -25,21 +26,26 @@ export function SessionTabs({
   const isMobile = useIsMobile()
   const scrollerRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<Map<string, HTMLElement>>(new Map())
-  const [fade, setFade] = useState<'none' | 'end' | 'start' | 'both'>('none')
+  const tablistRef = useRef<HTMLDivElement>(null)
+  const overflowRef = useRef(false)
+  const [overflow, setOverflow] = useState(false)
+  const [fade, setFade] = useState<TabFade>('none')
 
   const setTabRef = useCallback((id: string, el: HTMLElement | null) => {
     if (el) tabRefs.current.set(id, el)
     else tabRefs.current.delete(id)
   }, [])
 
-  // Edge fade only while content actually overflows in that direction
+  // Overflow is measured on the tab list alone (w-max, so its width is the tabs' natural width),
+  // never on the scroller's scrollWidth: that includes the "Next running" chip, and the chip
+  // appearing/disappearing would flip the measurement that decides whether it is shown.
   const updateFade = useCallback(() => {
     const el = scrollerRef.current
-    if (!el) return
-    const overflowing = el.scrollWidth - el.clientWidth > 2
-    const atStart = el.scrollLeft <= 2
-    const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2
-    const next = !overflowing ? 'none' : atStart ? 'end' : atEnd ? 'start' : 'both'
+    const list = tablistRef.current
+    if (!el || !list) return
+    overflowRef.current = decideOverflow(overflowRef.current, list.offsetWidth, el.clientWidth)
+    setOverflow(prev => (prev === overflowRef.current ? prev : overflowRef.current))
+    const next = decideFade(overflowRef.current, el.scrollLeft, el.clientWidth, el.scrollWidth)
     setFade(prev => (prev === next ? prev : next))
   }, [])
 
@@ -50,7 +56,7 @@ export function SessionTabs({
     el.addEventListener('scroll', updateFade, { passive: true })
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateFade) : null
     ro?.observe(el)
-    if (el.firstElementChild) ro?.observe(el.firstElementChild)
+    if (tablistRef.current) ro?.observe(tablistRef.current)
     return () => {
       el.removeEventListener('scroll', updateFade)
       ro?.disconnect()
@@ -95,8 +101,13 @@ export function SessionTabs({
       className={`min-w-0 overflow-x-auto overflow-y-hidden scrollbar-hide snap-x overscroll-x-contain ${fadeClass}`}
       style={{ touchAction: 'pan-x', scrollPaddingInline: isMobile ? 0 : 12 }}
     >
-      <div className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
-      <div role="tablist" aria-label="Sessions" onKeyDown={onTabKeyDown} className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
+      {/* Row height is reserved whenever the strip overflows (or on mobile), so the chip coming and
+          going never changes the height of the top bar */}
+      <div
+        className={`flex gap-1 w-max items-center ${isMobile ? 'min-h-11' : ''}`}
+        style={{ minHeight: !isMobile && overflow ? 32 : undefined }}
+      >
+      <div ref={tablistRef} role="tablist" aria-label="Sessions" onKeyDown={onTabKeyDown} className={`flex gap-1 w-max ${isMobile ? 'items-center min-h-11' : ''}`}>
         {sessions.length > 0 && (() => {
           const isSelected = selectedSessionId === ALL_SESSIONS_ID
           const anyActive = sessions.some(x => x.status === 'active')
@@ -209,7 +220,7 @@ export function SessionTabs({
           )
         })}
       </div>
-      {(isMobile || fade !== 'none') && nextRunningId && (
+      {(isMobile || overflow) && nextRunningId && (
         <button
           type="button"
           onClick={() => onSelectSession(nextRunningId)}
