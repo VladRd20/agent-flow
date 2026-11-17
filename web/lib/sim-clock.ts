@@ -53,3 +53,8 @@ export function idleTickDelta(elapsedMs: number, resumedFromHidden: boolean): nu
   const s = Math.max(0, elapsedMs) / 1000
   return resumedFromHidden ? s : Math.min(s, IDLE_TICK_MAX_S)
 }
+
+/** Clock reading the sim should show on return from a hidden tab: the reading when it was hidden plus the wall time spent hidden. */
+export function resumeClockTarget(timeAtHide: number, hiddenMs: number, speed: number): number {
+  return timeAtHide + Math.max(0, hiddenMs) / 1000 * speed
+}

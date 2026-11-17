@@ -18,7 +18,7 @@ import { createEmptyState, MAX_EVENT_LOG } from './simulation/types'
 import { processEvent, foldEvents, VISUAL_LIFETIME_S, HISTORICAL_BATCH_MIN, type ProcessEventContext } from './simulation/process-event'
 import { computeNextFrame } from './simulation/animate'
 import { snapVisualState } from './simulation/snap-visual-state'
-import { createSimClock, idleTickDelta } from '@/lib/sim-clock'
+import { createSimClock, idleTickDelta, resumeClockTarget } from '@/lib/sim-clock'
 import { shouldCommitFrame } from './simulation/ui-throttle'
 import { buildForceConfig, type ForceConfig } from './simulation/force-config'
 import { onViewAspectChange } from '@/lib/view-aspect'
@@ -425,15 +425,33 @@ export function useAgentSimulation(options: UseAgentSimulationOptions = {}) {
     if (!state.isPlaying || useMockData) return
     let last = performance.now()
     let wasHidden = false
+    // Sim time and wall time when the tab went hidden; used to catch the clock up on return
+    let hiddenAnchor: { time: number; at: number } | null = null
     const id = setInterval(() => {
       // Hidden tab: skip (last stays put); the first visible tick advances by the full elapsed time
-      if (typeof document !== 'undefined' && document.hidden) { wasHidden = true; return }
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (!hiddenAnchor) hiddenAnchor = { time: frameRef.current.currentTime, at: performance.now() }
+        wasHidden = true
+        return
+      }
       const now = performance.now()
       const dt = idleTickDelta(now - last, wasHidden)
       wasHidden = false
       last = now
-      if (!frameDriver.isIdle) return
+      const anchor = hiddenAnchor
+      hiddenAnchor = null
       const cur = frameRef.current
+      if (anchor && cur.isPlaying) {
+        // The frame driver is not idle while an agent is thinking/running, and its per-frame
+        // delta is capped, so without this the readout would stay behind by the hidden time.
+        const target = resumeClockTarget(anchor.time, now - anchor.at, cur.speed)
+        if (target > cur.currentTime) {
+          frameRef.current = { ...cur, currentTime: target, maxTimeReached: Math.max(cur.maxTimeReached, target) }
+          clock.publish(target, frameRef.current.maxTimeReached)
+        }
+        return
+      }
+      if (!frameDriver.isIdle) return
       if (!cur.isPlaying) return
       const t = cur.currentTime + dt * cur.speed
       frameRef.current = { ...cur, currentTime: t, maxTimeReached: Math.max(cur.maxTimeReached, t) }
