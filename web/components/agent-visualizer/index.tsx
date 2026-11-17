@@ -37,6 +37,7 @@ import { useAudioEffects } from "@/hooks/use-audio-effects"
 import type { ConversationMessage } from "@/hooks/simulation/types"
 import { buildGhostView } from "@/hooks/simulation/ghost-view"
 import { ALL_SESSIONS_ID } from "@/lib/all-sessions"
+import { useEmptyOverlayVisible } from '@/hooks/use-empty-overlay'
 import { useOfflineVisible } from "@/hooks/use-offline-visible"
 import { summarizeAgentStates } from "@/lib/agent-status-summary"
 import { createTimelineCache, mergeTimelineEvents, type TimelineCache } from "@/lib/timeline-merge"
@@ -395,6 +396,8 @@ export function AgentVisualizer() {
 
   const isEmpty = liveAgents.size === 0 && !bridge.useMockData
   const offlineVisible = useOfflineVisible(bridge.connectionStatus)
+  // Grace period: a session switch / new-session start empties the sim for a few frames
+  const emptyVisible = useEmptyOverlayVisible(isEmpty, bridge.selectedSessionId)
 
   return (
     <OpenFileProvider value={bridge.isVSCode ? openFile : null}>
@@ -404,7 +407,7 @@ export function AgentVisualizer() {
       data-right-panel={showTranscript ? 'transcript' : showFileAttention ? 'files' : undefined}
     >
       {/* Empty state when no demo and no live data */}
-      {isEmpty && (
+      {emptyVisible && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
           <div className="text-center" style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
             {/* Cyan at 85% / 70% on #050510: 8.2:1 / 5.8:1 (WCAG AA needs 4.5:1) */}
