@@ -54,6 +54,12 @@ test('relay: /clear ends once, bookkeeping does not revive, resume does; labels 
   const sessA = '11111111-aaaa-bbbb-cccc-000000000001'
   const fileA = path.join(projectDir, `${sessA}.jsonl`)
   fs.writeFileSync(fileA, L({ type: 'user', uuid: 'u1', message: { role: 'user', content: '@"C:\\x\\clip.mp4" Look at this' } }))
+  // B was already cleared before the relay started: it must be ended on attach.
+  const sessB = '11111111-aaaa-bbbb-cccc-000000000002'
+  fs.writeFileSync(path.join(projectDir, `${sessB}.jsonl`),
+    L({ type: 'user', uuid: 'b1', message: { role: 'user', content: 'old work' } }) +
+    L({ type: 'queue-operation', operation: 'enqueue', content: '/clear' }) +
+    L({ type: 'queue-operation', operation: 'dequeue' }) + L({ type: 'cost-state' }))
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { createRelay } = require('./relay') as typeof import('./relay')
@@ -68,9 +74,12 @@ test('relay: /clear ends once, bookkeeping does not revive, resume does; labels 
   })
   sseRes = res
   relay.handleSSE(req, res)
-  const count = (needle: string) => frames.filter(f => f.includes(needle)).length
+  const countB = (needle: string) => frames.filter(f => f.includes(needle) && f.includes(sessB)).length
+  const count = (needle: string) => frames.filter(f => f.includes(needle) && f.includes(sessA)).length
 
   assert.ok(await waitFor(() => count('session-started') >= 1, 4000), 'session started')
+  assert.ok(await waitFor(() => countB('session-ended') >= 1, 4000), 'already-cleared session ended on attach')
+  assert.equal(count('session-ended'), 0, 'live session A not ended on attach')
   assert.ok(frames.some(f => f.includes('Look at this') && !f.includes('clip.mp4')), 'label stripped of @mention')
 
   // /clear in the transcript ends the session, exactly once.

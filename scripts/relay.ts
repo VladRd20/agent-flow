@@ -343,6 +343,19 @@ function endSession(sessionId: string, emitComplete: boolean) {
   broadcastSessionLifecycle('ended', sessionId, session.label)
 }
 
+const CLEAR_TAIL_BYTES = 64 * 1024
+
+/** True when the last /clear-or-conversation line in the file's tail is a /clear enqueue. */
+function transcriptTailEndsWithClear(filePath: string, size: number): boolean {
+  const len = Math.min(size, CLEAR_TAIL_BYTES)
+  if (len <= 0) return false
+  const buf = Buffer.alloc(len)
+  const fd = fs.openSync(filePath, 'r')
+  try { fs.readSync(fd, buf, 0, len, size - len) } finally { fs.closeSync(fd) }
+  // A partial first line just fails to parse and is ignored.
+  return classifyTranscriptLines(buf.toString('utf8').split('\n')).ended
+}
+
 async function watchSession(sessionId: string, filePath: string): Promise<void> {
   const defaultLabel = `Session ${sessionId.slice(0, SESSION_ID_DISPLAY)}`
   const session: WatchedSession = {
@@ -476,6 +489,11 @@ async function attachSession(sessionId: string, filePath: string, session: Watch
   session.subagentsDir = path.join(path.dirname(filePath), sessionId, 'subagents')
   scanSubagentsDir(watcherDelegate, parser, sessionId)
   resetInactivityTimer(sessionId)
+  // A transcript that already ends in /clear (relay restarted after the user cleared) is over:
+  // end it now instead of showing it live until the inactivity timeout.
+  try {
+    if (transcriptTailEndsWithClear(filePath, session.fileSize)) endSession(sessionId, true)
+  } catch (err) { warnLimited(sessionId, 'Attach /clear check', err) }
 
   log(`[session] Watching ${sessionId.slice(0, SESSION_ID_DISPLAY)} — "${session.label}"`)
 }
