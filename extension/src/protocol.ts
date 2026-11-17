@@ -191,6 +191,11 @@ export interface SubagentState {
   /** Node has been completed (Workflow subagents complete when their Workflow
    *  tool_result arrives). Cleared if the transcript starts growing again. */
   completed: boolean
+  /** True while the initial async pre-scan is running; the file watcher is not
+   *  registered and readSubagentNewLines is a no-op until it finishes. */
+  attaching?: boolean
+  /** Pending coalescing timer for this file's fs.watch events. */
+  debounceTimer?: NodeJS.Timeout | null
 }
 
 /** State tracked for a single watched Claude Code session */
@@ -223,6 +228,8 @@ export interface WatchedSession {
   /** Subagent names currently receiving inline progress events — file watcher skips these */
   inlineProgressAgents: Set<string>
   subagentsDirWatcher: import('fs').FSWatcher | null
+  /** Pending coalescing timer for subagents-dir watch events. */
+  subagentsDirDebounce?: NodeJS.Timeout | null
   subagentsDir: string | null
   label: string
   labelSet: boolean
