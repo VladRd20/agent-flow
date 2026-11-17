@@ -26,6 +26,8 @@ import {
   HOOK_SERVER_NOT_STARTED, WORKSPACE_HASH_LENGTH,
   SESSION_RETENTION_MS, SESSION_PRUNE_INTERVAL_MS, deriveAgentType,
 } from '../extension/src/constants'
+import { classifyTranscriptLines } from '../extension/src/transcript-activity'
+import { pruneStaleDiscoveryFiles } from './discovery-prune'
 import { setLogLevel } from '../extension/src/logger'
 import type { TelemetryClient } from './telemetry'
 
@@ -326,6 +328,21 @@ function resetInactivityTimer(sessionId: string) {
   }, INACTIVITY_TIMEOUT_MS)
 }
 
+/** Marks a session finished (SessionEnd hook or /clear in the transcript). Idempotent:
+ *  a second call, or a call after the inactivity timeout, broadcasts nothing. */
+function endSession(sessionId: string, emitComplete: boolean) {
+  const session = sessions.get(sessionId)
+  if (!session || session.sessionCompleted) return
+  session.sessionCompleted = true
+  if (session.inactivityTimer) { clearTimeout(session.inactivityTimer); session.inactivityTimer = null }
+  if (session.permissionTimer) { clearTimeout(session.permissionTimer); session.permissionTimer = null }
+  log(`[session] ${sessionId.slice(0, SESSION_ID_DISPLAY)} ended`)
+  if (emitComplete) {
+    broadcastEvent({ time: elapsed(sessionId), type: 'agent_complete', payload: { name: ORCHESTRATOR_NAME, sessionEnd: true }, sessionId })
+  }
+  broadcastSessionLifecycle('ended', sessionId, session.label)
+}
+
 async function watchSession(sessionId: string, filePath: string): Promise<void> {
   const defaultLabel = `Session ${sessionId.slice(0, SESSION_ID_DISPLAY)}`
   const session: WatchedSession = {
@@ -482,7 +499,11 @@ function readNewLines(sessionId: string) {
     handlePermissionDetection(watcherDelegate, ORCHESTRATOR_NAME, session.pendingToolCalls, session, sessionId, session.sessionCompleted, true)
     scanSubagentsDir(watcherDelegate, parser, sessionId)
   } catch (err) { warnLimited(sessionId, 'Post-read processing', err) }
-  resetInactivityTimer(sessionId)
+  // Only real conversation lines keep/revive a session; bookkeeping lines do not.
+  // A /clear enqueue ends it (fallback for setups without the SessionEnd hook).
+  const activity = classifyTranscriptLines(result.lines)
+  if (activity.ended) endSession(sessionId, true)
+  else if (activity.conversation) resetInactivityTimer(sessionId)
 }
 
 /** Closes every watcher/timer a session owns (transcript, subagent files, subagents dir)
@@ -697,9 +718,16 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
       // (possibly lagging) transcript-driven completion catches up.
       const filtered = filterHookEvent(event)
       if (filtered) broadcastEvent(filtered, true)
+      if (event.type === 'agent_complete' && event.payload?.sessionEnd && event.sessionId) {
+        endSession(event.sessionId, false)
+      }
     })
 
     writeDiscoveryFile(hookPort, workspace)
+    try {
+      const n = pruneStaleDiscoveryFiles(DISCOVERY_DIR, discoveryFilePath).length
+      if (n) log(`[relay] Pruned ${n} stale discovery file(s)`)
+    } catch { /* best effort */ }
 
     scanForActiveSessions(workspace)
     scanInterval = setInterval(() => scanForActiveSessions(workspace), RELAY_SCAN_INTERVAL_MS)

@@ -27,6 +27,7 @@ import { summarizeInput, summarizeResult, extractInputData, detectError, buildDi
 import { estimateTokensFromContent, estimateTokensFromText } from './token-estimator'
 import { createLogger } from './logger'
 import { recordContextUsage, resetContextForCompaction } from './context-usage'
+import { cleanLabelText } from './session-label'
 
 const log = createLogger('TranscriptParser')
 
@@ -188,6 +189,11 @@ export class TranscriptParser {
       parsed = JSON.parse(line.trim()) as Record<string, unknown>
     } catch (err) {
       log.debug('Skipping unparseable line:', err)
+      return
+    }
+
+    if (parsed.type === 'custom-title' && sessionId) {
+      this.maybeSetCustomTitle(parsed, sessionId)
       return
     }
 
@@ -707,7 +713,10 @@ export class TranscriptParser {
     const { catchUpEntries, pendingSubagentSpawns } = state
     if (!line.trim()) { return }
     try {
-      const entry = JSON.parse(line.trim()) as TranscriptEntry & { toolUseResult?: unknown }
+      const entry = JSON.parse(line.trim()) as TranscriptEntry & { toolUseResult?: unknown; customTitle?: unknown }
+      if (entry.type === 'custom-title' && typeof entry.customTitle === 'string' && entry.customTitle.trim()) {
+        session.customTitle = entry.customTitle.trim()
+      }
       // Track background subagents still running at attach time, so the
       // <task-notification> that arrives later can complete them.
       const queuedText = queuedCommandText(entry as unknown as Record<string, unknown>)
@@ -895,12 +904,15 @@ export class TranscriptParser {
     for (const entry of entries) {
       if (entry.type !== 'user') continue
       const text = this.extractUserMessageText(entry)
-      if (text) {
-        session.label = this.truncateLabel(text)
+      const label = text ? this.truncateLabel(cleanLabelText(text)) : ''
+      if (label) {
+        session.label = label
         session.labelSet = true
         return
       }
     }
+    // No real prompt yet: a custom-title (e.g. "General") beats "Session xxxxxxxx".
+    if (session.customTitle) session.label = this.truncateLabel(session.customTitle)
   }
 
   /** Extract text content from a user transcript entry, skipping system-injected tags */
@@ -935,6 +947,20 @@ export class TranscriptParser {
     return firstLine.slice(0, SESSION_LABEL_TRUNCATED) + '..'
   }
 
+  /** custom-title line: label fallback until a real prompt sets labelSet. */
+  maybeSetCustomTitle(parsed: Record<string, unknown>, sessionId: string): void {
+    const session = this.delegate.getSession(sessionId)
+    if (!session || typeof parsed.customTitle !== 'string') return
+    const title = parsed.customTitle.trim()
+    if (!title) return
+    session.customTitle = title
+    if (session.labelSet) return
+    const label = this.truncateLabel(title)
+    if (label === session.label) return
+    session.label = label
+    this.delegate.fireSessionLifecycle({ type: 'updated', sessionId, label })
+  }
+
   /** Update session label on first user message and notify the webview */
   maybeSetSessionLabel(entry: TranscriptEntry, sessionId: string): void {
     const session = this.delegate.getSession(sessionId)
@@ -942,7 +968,9 @@ export class TranscriptParser {
     if (entry.type !== 'user') return
     const text = this.extractUserMessageText(entry)
     if (!text) return
-    session.label = this.truncateLabel(text)
+    const label = this.truncateLabel(cleanLabelText(text))
+    if (!label) return
+    session.label = label
     session.labelSet = true
     this.delegate.fireSessionLifecycle({ type: 'updated', sessionId, label: session.label })
   }

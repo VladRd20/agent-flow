@@ -233,6 +233,8 @@ export interface WatchedSession {
   subagentsDir: string | null
   label: string
   labelSet: boolean
+  /** Latest custom-title seen; label fallback until a real prompt sets labelSet. */
+  customTitle?: string
   model: string | null
   /** Maps agent names to their last emitted model ID — re-emits on model change */
   modelDetectedAgents: Map<string, string>
