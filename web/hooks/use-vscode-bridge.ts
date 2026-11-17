@@ -6,6 +6,7 @@ import { SimulationEvent } from '@/lib/agent-types'
 import { SeqTracker } from '@/lib/seq-tracker'
 import { SessionEventBuffer } from '@/lib/session-event-buffer'
 import { wakeFrames } from '@/lib/frame-driver'
+import { backoffDelay } from '@/lib/reconnect-backoff'
 import {
   ALL_SESSIONS_ID, computeAllBase, mergeEventsByTime, readAllViewPreference, transformEventForAll, writeAllViewPreference,
 } from '@/lib/all-sessions'
@@ -145,6 +146,8 @@ export function useVSCodeBridge(): BridgeHookResult {
     let es: EventSource | null = null
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let disposed = false
+    let connected = false
+    let attempt = 0
 
     // Reconnect manually (instead of relying on EventSource's built-in retry,
     // which reuses the original URL) so every reconnect carries the resume
@@ -157,6 +160,8 @@ export function useVSCodeBridge(): BridgeHookResult {
       const source = new EventSource(query ? `${baseUrl}?${query}` : baseUrl)
       es = source
       source.onopen = () => {
+        connected = true
+        attempt = 0
         setConnectionStatus('connected')
         setUseMockData(false)
       }
@@ -175,23 +180,29 @@ export function useVSCodeBridge(): BridgeHookResult {
         } catch {}
       }
       source.onerror = () => {
+        connected = false
         setConnectionStatus('disconnected')
         source.close()
-        if (!disposed && es === source && !retryTimer) retryTimer = setTimeout(connect, 3000)
+        // Exponential backoff (1 s, 2 s, 4 s ... 30 s, +/-20% jitter), reset on open
+        if (!disposed && es === source && !retryTimer) retryTimer = setTimeout(connect, backoffDelay(attempt++))
       }
     }
     connect()
 
     // Mobile browsers suspend the stream in the background: reconnect promptly on return.
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && es && es.readyState === EventSource.CLOSED) connect()
+      if (document.visibilityState === 'visible' && !connected) connect()
     }
+    // Network came back: do not wait out the backoff timer
+    const onOnline = () => { if (!connected) connect() }
     document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
 
     return () => {
       disposed = true
       if (retryTimer) clearTimeout(retryTimer)
       document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
       es?.close()
     }
   }, [])
