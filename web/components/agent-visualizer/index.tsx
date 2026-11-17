@@ -37,6 +37,8 @@ import { useAudioEffects } from "@/hooks/use-audio-effects"
 import type { ConversationMessage } from "@/hooks/simulation/types"
 import { buildGhostView } from "@/hooks/simulation/ghost-view"
 import { ALL_SESSIONS_ID } from "@/lib/all-sessions"
+import { useOfflineVisible } from "@/hooks/use-offline-visible"
+import { summarizeAgentStates } from "@/lib/agent-status-summary"
 import { createTimelineCache, mergeTimelineEvents, type TimelineCache } from "@/lib/timeline-merge"
 
 const SHOW_FINISHED_KEY = "agent-flow:show-finished"
@@ -109,6 +111,9 @@ export function AgentVisualizer() {
     for (const id of hiddenAgents.keys()) if (!liveAgents.has(id)) n++
     return n
   }, [hiddenAgents, liveAgents])
+
+  // liveAgents is already scoped to the selected session ("All" merges every session)
+  const statusSummary = useMemo(() => summarizeAgentStates(liveAgents), [liveAgents])
 
   const selection = useSelectionState({ agents, toolCalls, discoveries })
   const { clearAllSelections, clearAgent, selectedAgentId: selectedAgentIdSel } = selection
@@ -389,6 +394,7 @@ export function AgentVisualizer() {
   }, [bridgeOpenFile])
 
   const isEmpty = liveAgents.size === 0 && !bridge.useMockData
+  const offlineVisible = useOfflineVisible(bridge.connectionStatus)
 
   return (
     <OpenFileProvider value={bridge.isVSCode ? openFile : null}>
@@ -401,8 +407,17 @@ export function AgentVisualizer() {
       {isEmpty && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
           <div className="text-center" style={{ fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
-            <div className="text-sm" style={{ color: '#66ccff80' }}>WAITING FOR AGENT SESSION</div>
-            <div className="mt-2 text-xs" style={{ color: '#66ccff40' }}>Start a Claude Code session to see activity</div>
+            {/* Cyan at 85% / 70% on #050510: 8.2:1 / 5.8:1 (WCAG AA needs 4.5:1) */}
+            {offlineVisible ? (
+              <div role="status" aria-live="polite">
+                <div className="text-sm" style={{ color: '#66ccffd9' }}>Connection lost, reconnecting…</div>
+              </div>
+            ) : (
+              <>
+                <div className="text-sm" style={{ color: '#66ccffd9' }}>WAITING FOR AGENT SESSION</div>
+                <div className="mt-2 text-xs" style={{ color: '#66ccffb3' }}>Start a Claude Code session to see activity</div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -565,6 +580,8 @@ export function AgentVisualizer() {
         isVSCode={bridge.isVSCode}
         connectionStatus={bridge.connectionStatus}
         agentCount={liveAgents.size}
+        statusSummary={statusSummary}
+        onSelectAgent={selection.handleAgentClick}
         finishedCount={finishedCount}
         showFinished={showFinished}
         onToggleFinished={toggleShowFinished}
