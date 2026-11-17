@@ -21,6 +21,11 @@ export class SeqAssigner {
     return n
   }
 
+  /** Forget a session's counter (its buffer was dropped). */
+  delete(sessionId: string): void {
+    this.counters.delete(sessionId)
+  }
+
   current(sessionId: string): number {
     return this.counters.get(sessionId) ?? 0
   }

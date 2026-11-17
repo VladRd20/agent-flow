@@ -60,6 +60,9 @@ export function followSession(
   parser: TranscriptParser,
   session: WatchedSession,
   projectsRoot: string,
+  /** Set false to skip the (readdir + exists per project folder) search for subagent
+   *  folders under other project folders; the relocation check still runs. */
+  scanExtraDirs = true,
 ): boolean {
   let moved = false
   if (!fs.existsSync(session.filePath)) {
@@ -78,6 +81,7 @@ export function followSession(
     }
   }
 
+  if (!scanExtraDirs) return moved
   const extra = findSubagentsDirs(projectsRoot, session.sessionId).filter(d => d !== session.subagentsDir)
   if (extra.length > 0) {
     scanExtraSubagentDirs(delegate, parser, session.sessionId, extra)

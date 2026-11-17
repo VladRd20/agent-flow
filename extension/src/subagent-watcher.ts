@@ -13,12 +13,18 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { AgentEvent, SubagentState, WatchedSession, emitSubagentSpawn } from './protocol'
 import { SESSION_ID_DISPLAY, ORCHESTRATOR_NAME, SUBAGENT_ID_SUFFIX_LENGTH, generateSubagentFallbackName, resolveSubagentChildName } from './constants'
-import { readNewFileLines } from './fs-utils'
+import { readNewFileLines, iterateFileLinesAsync } from './fs-utils'
 import { TranscriptParser } from './transcript-parser'
 import { handlePermissionDetection, PermissionDetectionDelegate } from './permission-detection'
 import { createLogger } from './logger'
+import { WarnLimiter } from './warn-limiter'
 
 const log = createLogger('SubagentWatcher')
+const warnLimiter = new WarnLimiter()
+
+function warnLimited(sessionId: string, what: string, err: unknown): void {
+  if (warnLimiter.shouldWarn(sessionId)) log.warn(`${what} failed (session ${sessionId.slice(0, SESSION_ID_DISPLAY)}):`, err)
+}
 
 /** Minimal transcript-line shape needed to recognise how a subagent's run ends. */
 interface TurnEntry {
@@ -46,6 +52,37 @@ export function isFinishingEntry(e: TurnEntry): boolean {
 /** At attach time, a transcript untouched this long is treated as finished even
  *  without a finishing entry (killed/crashed runs). */
 export const STALE_SUBAGENT_MS = 10 * 60 * 1000
+
+/** Coalesce the several fs.watch events fired per write (same as the main transcript). */
+export const SUBAGENT_WATCH_DEBOUNCE_MS = 75
+
+/** Cancel every pending subagent debounce timer a session owns. Call when releasing a session. */
+export function clearSubagentTimers(session: WatchedSession): void {
+  if (session.subagentsDirDebounce) { clearTimeout(session.subagentsDirDebounce); session.subagentsDirDebounce = null }
+  for (const sub of session.subagentWatchers.values()) {
+    if (sub.debounceTimer) { clearTimeout(sub.debounceTimer); sub.debounceTimer = null }
+  }
+}
+
+/** First event arms a timer; events arriving while it is pending are coalesced into one read. */
+function watchSubagentFile(
+  delegate: SubagentWatcherDelegate,
+  parser: TranscriptParser,
+  state: SubagentState,
+  getPath: () => string | null,
+  sessionId: string,
+): void {
+  state.watcher = fs.watch(getPath() ?? '', () => {
+    if (state.debounceTimer) return
+    state.debounceTimer = setTimeout(() => {
+      state.debounceTimer = null
+      const p = getPath()
+      try {
+        if (p) readSubagentNewLines(delegate, parser, p, sessionId)
+      } catch (err) { warnLimited(sessionId, 'Subagent read', err) }
+    }, SUBAGENT_WATCH_DEBOUNCE_MS)
+  })
+}
 
 function parseTurnEntries(lines: readonly string[]): TurnEntry[] {
   const out: TurnEntry[] = []
@@ -175,7 +212,13 @@ export function scanSubagentsDir(
   // detected promptly; fall back to a flat watch on platforms without recursive
   // support (Linux). Either way the POLL_FALLBACK_MS poll re-scans recursively.
   if (!session.subagentsDirWatcher && fs.existsSync(session.subagentsDir)) {
-    const onChange = () => scanSubagentsDir(delegate, parser, sessionId)
+    const onChange = () => {
+      if (session.subagentsDirDebounce) return
+      session.subagentsDirDebounce = setTimeout(() => {
+        session.subagentsDirDebounce = null
+        try { scanSubagentsDir(delegate, parser, sessionId) } catch (err) { warnLimited(sessionId, 'Subagent dir scan', err) }
+      }, SUBAGENT_WATCH_DEBOUNCE_MS)
+    }
     try {
       session.subagentsDirWatcher = fs.watch(session.subagentsDir, { recursive: true }, onChange)
     } catch {
@@ -237,14 +280,15 @@ export function moveSubagentWatchers(
     const newPath = path.join(toDir, rel)
     state.watcher?.close()
     state.watcher = null
+    if (state.debounceTimer) { clearTimeout(state.debounceTimer); state.debounceTimer = null }
     session.subagentWatchers.delete(oldPath)
     // Already picked up at its new path by a scan that ran mid-move
     if (session.subagentWatchers.has(newPath)) continue
     session.subagentWatchers.set(newPath, state)
+    // Still pre-scanning: the attach path registers the watcher at the current key when it finishes
+    if (state.attaching) continue
     try {
-      state.watcher = fs.watch(newPath, () => {
-        readSubagentNewLines(delegate, parser, newPath, sessionId)
-      })
+      watchSubagentFile(delegate, parser, state, () => newPath, sessionId)
     } catch (err) { log.debug('Subagent file watch failed:', err) }
   }
 }
@@ -273,11 +317,33 @@ function startWatchingSubagentFile(
     permissionEmitted: false,
     spawnEmitted: false,
     completed: false,
+    attaching: true,
+    debounceTimer: null,
   }
+  // Registered up front so concurrent scans dedup on the path; reads skip it while `attaching`.
   session.subagentWatchers.set(filePath, state)
+  attachSubagentFile(delegate, parser, session, state, agentName, sessionId)
+    .catch(err => log.debug('Subagent attach failed:', err))
+}
+
+async function attachSubagentFile(
+  delegate: SubagentWatcherDelegate,
+  parser: TranscriptParser,
+  session: WatchedSession,
+  state: SubagentState,
+  agentName: string,
+  sessionId: string,
+): Promise<void> {
+  const currentPath = (): string | null => {
+    for (const [p, s] of session.subagentWatchers) if (s === state) return p
+    return null
+  }
+  const filePath = currentPath()
+  if (!filePath) return
 
   // Pre-scan existing content for dedup IDs and determine if the subagent
   // is still active (has unmatched tool_use blocks = pending work).
+  // Async + chunked so a 50 MB transcript does not freeze the event loop.
   const pendingToolUseIds = new Set<string>()
   let lastTurn: TurnEntry | null = null
   let stale = false
@@ -285,8 +351,7 @@ function startWatchingSubagentFile(
     const stat = fs.statSync(filePath)
     stale = Date.now() - stat.mtimeMs > STALE_SUBAGENT_MS
     if (stat.size > 0) {
-      const content = fs.readFileSync(filePath, 'utf-8')
-      for (const line of content.split(/\r?\n/)) {
+      for await (const line of iterateFileLinesAsync(filePath, stat.size)) {
         if (!line.trim()) continue
         try {
           const raw: unknown = JSON.parse(line.trim())
@@ -308,6 +373,10 @@ function startWatchingSubagentFile(
     }
   } catch (err) { log.debug('Subagent initial read failed:', err) }
 
+  // Session pruned/released (or this watcher dropped) while scanning: emit nothing, watch nothing.
+  if (delegate.getSession(sessionId) !== session || currentPath() === null) return
+  state.attaching = false
+
   // Already finished at attach time: never show it as running. Marked completed
   // (and spawn-emitted) so that if it is written again later, the resume path
   // in readSubagentNewLines re-spawns it.
@@ -318,19 +387,23 @@ function startWatchingSubagentFile(
     // Only emit spawn for subagents that are still active (have pending work)
     // AND haven't already been spawned by the transcript parser.
     const alreadySpawned = session.spawnedSubagents.has(agentName)
-  state.spawnEmitted = pendingToolUseIds.size > 0 || alreadySpawned
+    state.spawnEmitted = pendingToolUseIds.size > 0 || alreadySpawned
     if (pendingToolUseIds.size > 0 && !alreadySpawned) {
       session.spawnedSubagents.add(agentName)
       emitSubagentSpawn(delegate, ORCHESTRATOR_NAME, agentName, agentName, sessionId)
     }
   }
 
-  // Watch for new content
+  // Watch for new content, only now that the scan is done. The file may have
+  // been re-keyed by a worktree move meanwhile, so the path is resolved lazily.
   try {
-    state.watcher = fs.watch(filePath, () => {
-      readSubagentNewLines(delegate, parser, filePath, sessionId)
-    })
+    watchSubagentFile(delegate, parser, state, currentPath, sessionId)
   } catch (err) { log.debug('Subagent file watch failed:', err) }
+  // Anything appended while we scanned is read now rather than at the next poll
+  const p = currentPath()
+  try {
+    if (p) readSubagentNewLines(delegate, parser, p, sessionId)
+  } catch (err) { warnLimited(sessionId, 'Subagent read', err) }
 }
 
 export function readSubagentNewLines(
@@ -342,7 +415,7 @@ export function readSubagentNewLines(
   const session = delegate.getSession(sessionId)
   if (!session) return
   const state = session.subagentWatchers.get(filePath)
-  if (!state) return
+  if (!state || state.attaching) return
 
   const result = readNewFileLines(filePath, state.fileSize, state.fileTail)
   if (!result) return
@@ -385,7 +458,9 @@ export function readSubagentNewLines(
   }
 
   for (const line of result.lines) {
-    parser.processTranscriptLine(line, state.agentName, state.pendingToolCalls, state.seenToolUseIds, sessionId)
+    try {
+      parser.processTranscriptLine(line, state.agentName, state.pendingToolCalls, state.seenToolUseIds, sessionId)
+    } catch (err) { warnLimited(sessionId, 'Subagent line processing', err) }
   }
 
   // The run ended in this batch: complete the node now instead of waiting for a

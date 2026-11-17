@@ -12,7 +12,7 @@ import { TranscriptParser } from './transcript-parser'
 import { readNewFileLines, foldPathCase } from './fs-utils'
 import { followSession } from './session-relocation'
 import { handlePermissionDetection } from './permission-detection'
-import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime } from './subagent-watcher'
+import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime, clearSubagentTimers } from './subagent-watcher'
 import { createLogger } from './logger'
 import { buildContextPayload } from './context-usage'
 
@@ -612,6 +612,7 @@ export class SessionWatcher implements AgentSessionWatcher {
         sub.watcher?.close()
         if (sub.permissionTimer) clearTimeout(sub.permissionTimer)
       }
+      clearSubagentTimers(session)
       session.subagentWatchers.clear()
       session.subagentsDirWatcher?.close()
       // Clean up orphaned parser state for this session
