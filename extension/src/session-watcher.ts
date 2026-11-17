@@ -15,6 +15,7 @@ import { handlePermissionDetection } from './permission-detection'
 import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime, clearSubagentTimers } from './subagent-watcher'
 import { createLogger } from './logger'
 import { buildContextPayload } from './context-usage'
+import { classifyTranscriptLines } from './transcript-activity'
 
 const log = createLogger('SessionWatcher')
 
@@ -513,8 +514,25 @@ export class SessionWatcher implements AgentSessionWatcher {
     // Check for new subagent files
     scanSubagentsDir(this.selfDelegate, this.parser, sessionId)
 
-    // Reset inactivity timer — session is still active
-    this.resetInactivityTimer(sessionId)
+    // Only real conversation lines keep/revive a session; a /clear enqueue ends it.
+    const activity = classifyTranscriptLines(result.lines)
+    if (activity.ended) this.endSession(sessionId)
+    else if (activity.conversation) this.resetInactivityTimer(sessionId)
+  }
+
+  /** Idempotent: marks the session finished (transcript /clear). */
+  private endSession(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session || session.sessionCompleted) return
+    session.sessionCompleted = true
+    if (session.inactivityTimer) { clearTimeout(session.inactivityTimer); session.inactivityTimer = null }
+    if (session.permissionTimer) { clearTimeout(session.permissionTimer); session.permissionTimer = null }
+    this.emit({
+      time: this.elapsed(sessionId),
+      type: 'agent_complete',
+      payload: { name: ORCHESTRATOR_NAME, sessionEnd: true },
+    }, sessionId)
+    this._onSessionLifecycle.fire({ type: 'ended', sessionId, label: session.label })
   }
 
   /** Reset the inactivity timer. When no new content arrives, emit agent_complete */
