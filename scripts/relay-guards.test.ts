@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
 import {
   StaleSessionMemo, shouldWatchSession, STALE_CHECK_TTL_MS, SUBAGENT_LIVENESS_MAX_AGE_MS,
-  UnwatchedTracker, UNWATCHED_MAX_EVENTS, UNWATCHED_TTL_MS, WarnLimiter,
+  UnwatchedTracker, dropExpiredUnwatched, UNWATCHED_MAX_EVENTS, UNWATCHED_TTL_MS, WarnLimiter,
 } from './relay-guards'
 import { SeqAssigner } from './relay-seq'
 
@@ -79,18 +79,20 @@ test('unwatched: buffer is capped to the newest events', () => {
   assert.equal(buf[0], 100)
 })
 
-test('unwatched: expired and still-unwatched ids are returned for dropping; seq state can be cleared', () => {
+test('unwatched: expired buffer is dropped but the seq counter keeps counting (never re-issues a lower seq)', () => {
   const t = new UnwatchedTracker()
   const seq = new SeqAssigner()
-  seq.next('a'); seq.next('a')
+  const buffers = new Map<string, number[]>()
+  const emit = (sid: string) => { const n = seq.next(sid); buffers.set(sid, [...(buffers.get(sid) ?? []), n]); return n }
   t.touch('a', 0)
-  t.touch('a', 5 * 60_000) // later touches do not extend the TTL
-  assert.deepEqual(t.sweep(UNWATCHED_TTL_MS - 1, () => false), [])
-  const dropped = t.sweep(UNWATCHED_TTL_MS, () => false)
-  assert.deepEqual(dropped, ['a'])
-  for (const sid of dropped) seq.delete(sid)
-  assert.equal(seq.current('a'), 0)
+  assert.equal(emit('a'), 1)
+  assert.equal(emit('a'), 2)
+  assert.deepEqual(dropExpiredUnwatched(t, buffers, UNWATCHED_TTL_MS - 1, () => false), [])
+  assert.deepEqual(dropExpiredUnwatched(t, buffers, UNWATCHED_TTL_MS, () => false), ['a'])
+  assert.equal(buffers.has('a'), false)
   assert.equal(t.size, 0)
+  assert.equal(emit('a'), 3, 'next event continues above the previous seq')
+  assert.equal((seq as unknown as { delete?: unknown }).delete, undefined, 'SeqAssigner has no reset API')
 })
 
 test('unwatched: a session that becomes watched is untracked and its buffer is kept', () => {

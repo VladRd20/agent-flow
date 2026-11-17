@@ -64,6 +64,35 @@ export function clearSubagentTimers(session: WatchedSession): void {
   }
 }
 
+/** Max concurrent subagent pre-scans per session; the rest wait in a queue. */
+export const SUBAGENT_ATTACH_CONCURRENCY = 3
+const attachQueues = new WeakMap<WatchedSession, { active: number; waiting: Array<() => void> }>()
+
+async function acquireAttachSlot(session: WatchedSession): Promise<void> {
+  let q = attachQueues.get(session)
+  if (!q) { q = { active: 0, waiting: [] }; attachQueues.set(session, q) }
+  if (q.active < SUBAGENT_ATTACH_CONCURRENCY) { q.active++; return }
+  await new Promise<void>(resolve => q!.waiting.push(resolve)) // slot is handed over by releaseAttachSlot
+}
+
+function releaseAttachSlot(session: WatchedSession): void {
+  const q = attachQueues.get(session)
+  if (!q) return
+  const next = q.waiting.shift()
+  if (next) next()
+  else q.active = Math.max(0, q.active - 1)
+}
+
+/** An fs.watch 'error' (e.g. the watched path was removed) must never reach uncaughtException:
+ *  warn (rate limited), close the watcher, and let the poll fallback take over. */
+export function guardWatcher(w: fs.FSWatcher, sessionId: string, what: string, onClose?: () => void): void {
+  w.on('error', (err) => {
+    warnLimited(sessionId, `${what} watcher error`, err)
+    try { w.close() } catch { /* already closed */ }
+    onClose?.()
+  })
+}
+
 /** First event arms a timer; events arriving while it is pending are coalesced into one read. */
 function watchSubagentFile(
   delegate: SubagentWatcherDelegate,
@@ -82,6 +111,7 @@ function watchSubagentFile(
       } catch (err) { warnLimited(sessionId, 'Subagent read', err) }
     }, SUBAGENT_WATCH_DEBOUNCE_MS)
   })
+  guardWatcher(state.watcher, sessionId, 'Subagent file', () => { state.watcher = null })
 }
 
 function parseTurnEntries(lines: readonly string[]): TurnEntry[] {
@@ -226,6 +256,8 @@ export function scanSubagentsDir(
         session.subagentsDirWatcher = fs.watch(session.subagentsDir, onChange)
       } catch (err) { log.debug('Subagent dir watch failed:', err) }
     }
+    const dw = session.subagentsDirWatcher
+    if (dw) guardWatcher(dw, sessionId, 'Subagents dir', () => { if (session.subagentsDirWatcher === dw) session.subagentsDirWatcher = null })
   }
 
   const subDir = session.subagentsDir
@@ -338,6 +370,26 @@ async function attachSubagentFile(
     for (const [p, s] of session.subagentWatchers) if (s === state) return p
     return null
   }
+  // Bounded concurrency: files waiting here stay registered (attaching) so scans dedup on the path.
+  await acquireAttachSlot(session)
+  try {
+    await attachSubagentFileBody(delegate, parser, session, state, agentName, sessionId, currentPath)
+  } finally {
+    releaseAttachSlot(session)
+  }
+}
+
+async function attachSubagentFileBody(
+  delegate: SubagentWatcherDelegate,
+  parser: TranscriptParser,
+  session: WatchedSession,
+  state: SubagentState,
+  agentName: string,
+  sessionId: string,
+  currentPath: () => string | null,
+): Promise<void> {
+  // Released/pruned while queued: drop it without reading anything.
+  if (delegate.getSession(sessionId) !== session) return
   const filePath = currentPath()
   if (!filePath) return
 

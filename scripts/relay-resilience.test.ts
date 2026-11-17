@@ -73,6 +73,21 @@ test('relay: failed attach warns and is retried on the next scan; a bad line doe
     await sleep(300)
     assert.equal(warns.filter(w => w.includes('Failed to attach session broken-s')).length, 1, 'retry succeeded')
 
+    // M3: a transcript-watch failure AFTER the catch-up broadcast must not roll the attach back
+    // (a retry would re-broadcast the whole catch-up). Session stays attached; no second attach.
+    const watchFault = path.join(projectDir, 'watchfault-session.jsonl')
+    fs.writeFileSync(watchFault, JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' }, uuid: 'w1' }) + '\n')
+    let faultAttaches = 0
+    relayTestHooks.beforeAttach = (id) => { if (id === 'watchfault-session') faultAttaches++ }
+    relayTestHooks.beforeWatch = () => { throw new Error('simulated fs.watch failure') }
+    fs.writeFileSync(path.join(projectDir, 'trigger3.jsonl'), '')
+    assert.ok(await waitFor(() => warns.some(w => w.includes('Transcript watch failed')), 4000), 'watch failure warned')
+    relayTestHooks.beforeWatch = undefined
+    fs.writeFileSync(path.join(projectDir, 'trigger4.jsonl'), '')
+    await sleep(6000) // > one 5 s scan interval
+    assert.equal(faultAttaches, 1, 'no rollback and no re-attach after the first broadcast')
+    assert.equal(warns.filter(w => w.includes('Failed to attach session watchfau')).length, 0, 'not treated as an attach failure')
+
     // Good session followed by a line that parses as JSON but is hostile.
     const good = path.join(projectDir, 'good-session.jsonl')
     fs.writeFileSync(good, JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' }, uuid: 'u1' }) + '\n')
