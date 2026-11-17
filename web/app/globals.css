@@ -386,6 +386,13 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
+/* Tab close buttons: no hover on touch tablets, so keep them visible there */
+@media (hover: none) {
+  .af-tab-close {
+    opacity: 0.7;
+  }
+}
+
 /* LIVE badge dot: pure-CSS pulse (no React timer). Base style is the bright phase. */
 .af-live-pulse {
   box-shadow: 0 0 8px var(--af-live-dot), 0 0 16px rgba(255, 68, 68, 0.3);
