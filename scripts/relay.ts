@@ -14,8 +14,8 @@ import { SeqAssigner, resolveSince, firstIndexAfter, trimEventBuffer } from './r
 import { buildContextPayload } from '../extension/src/context-usage'
 import { TranscriptParser } from '../extension/src/transcript-parser'
 import { readNewFileLines, foldPathCase } from '../extension/src/fs-utils'
-import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime, clearSubagentTimers } from '../extension/src/subagent-watcher'
-import { StaleSessionMemo, shouldWatchSession, UnwatchedTracker, WarnLimiter } from './relay-guards'
+import { scanSubagentsDir, readSubagentNewLines, newestSubagentMtime, clearSubagentTimers, guardWatcher } from '../extension/src/subagent-watcher'
+import { StaleSessionMemo, shouldWatchSession, UnwatchedTracker, WarnLimiter, dropExpiredUnwatched } from './relay-guards'
 import { followSession } from '../extension/src/session-relocation'
 import { handlePermissionDetection } from '../extension/src/permission-detection'
 import { CodexSessionWatcher } from '../extension/src/codex-session-watcher'
@@ -47,6 +47,8 @@ const WATCH_DEBOUNCE_MS = 75
 /** The old-worktree subagent-folder search (readdir of the projects root) runs at most this often per session. */
 const EXTRA_SUBAGENT_DIRS_INTERVAL_MS = 30_000
 const UNWATCHED_SWEEP_INTERVAL_MS = 60_000
+/** Completed sessions: stat-check subagent files every Nth poll tick. */
+const COMPLETED_SUBAGENT_CHECK_EVERY_TICKS = 5
 const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow')
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects')
 
@@ -360,7 +362,7 @@ async function watchSession(sessionId: string, filePath: string): Promise<void> 
 }
 
 /** Test seam: lets tests inject a failure into the attach step. Not used in production. */
-export const relayTestHooks: { beforeAttach?: (sessionId: string) => void; beforeLine?: (line: string) => void } = {}
+export const relayTestHooks: { beforeAttach?: (sessionId: string) => void; beforeLine?: (line: string) => void; beforeWatch?: () => void } = {}
 
 async function attachSession(sessionId: string, filePath: string, session: WatchedSession): Promise<void> {
   relayTestHooks.beforeAttach?.(sessionId)
@@ -390,20 +392,33 @@ async function attachSession(sessionId: string, filePath: string, session: Watch
   // stand down while the watcher is demonstrably delivering events.
   let debounce: NodeJS.Timeout | null = null
   let lastWatchEvent = 0
-  const watchTranscript = () => fs.watch(session.filePath, (eventType) => {
-    if (eventType !== 'change') return
-    lastWatchEvent = Date.now()
-    if (debounce) return
-    debounce = setTimeout(() => {
-      debounce = null
-      try { readNewLines(sessionId) } catch (err) { warnLimited(sessionId, 'Transcript read', err) }
-    }, WATCH_DEBOUNCE_MS)
-  })
-  session.fileWatcher = watchTranscript()
+  const watchTranscript = () => {
+    relayTestHooks.beforeWatch?.()
+    const w = fs.watch(session.filePath, (eventType) => {
+      if (eventType !== 'change') return
+      lastWatchEvent = Date.now()
+      if (debounce) return
+      debounce = setTimeout(() => {
+        debounce = null
+        try { readNewLines(sessionId) } catch (err) { warnLimited(sessionId, 'Transcript read', err) }
+      }, WATCH_DEBOUNCE_MS)
+    })
+    // A watcher 'error' must not become an uncaughtException (process exit); the poll is the fallback.
+    guardWatcher(w, sessionId, 'Transcript', () => { if (session.fileWatcher === w) session.fileWatcher = null })
+    return w
+  }
+  // Everything below runs after the catch-up broadcast: nothing may throw out of the attach
+  // (a rollback now would re-broadcast the whole catch-up on retry). The poll's followSession
+  // repairs a transcript that moved during the prescan.
+  try {
+    session.fileWatcher = watchTranscript()
+  } catch (err) { warnLimited(sessionId, 'Transcript watch', err) }
 
   let lastExtraDirsScan = 0
+  let tick = 0
   session.pollTimer = setInterval(() => {
     try {
+      tick++
       // Completed sessions: only check whether the transcript moved (one existsSync).
       // A resumed session is revived by the transcript/subagent fs.watch handlers and
       // the main-file read below, which call resetInactivityTimer (clears sessionCompleted).
@@ -417,6 +432,17 @@ async function attachSession(sessionId: string, filePath: string, session: Watch
           log(`[session] ${sessionId.slice(0, SESSION_ID_DISPLAY)} moved to ${session.filePath}`)
           session.fileWatcher?.close()
           try { session.fileWatcher = watchTranscript() } catch {}
+        }
+      }
+      // Completed sessions: every 5th tick (~15 s) stat each subagent file and read only those whose
+      // size changed, so a subagent write whose fs.watch event was missed still revives the session.
+      if (completed && tick % COMPLETED_SUBAGENT_CHECK_EVERY_TICKS === 0) {
+        for (const [subPath, sub] of session.subagentWatchers) {
+          if (sub.attaching) continue
+          let size = -1
+          try { size = fs.statSync(subPath).size } catch { continue }
+          if (size !== sub.fileSize) readSubagentNewLines(watcherDelegate, parser, subPath, sessionId)
+          if (!session.sessionCompleted) break // revived: the regular path takes over
         }
       }
       // Fallback only: skip the reads when fs.watch fired within the last interval.
@@ -498,9 +524,8 @@ function pruneOldSessions() {
 
 /** Drop buffers of hook-only sessions that never got a transcript watcher. */
 function sweepUnwatchedBuffers() {
-  for (const sid of unwatchedTracker.sweep(Date.now(), id => sessions.has(id))) {
-    eventBuffer.delete(sid)
-    seqAssigner.delete(sid)
+  // Buffer only: the seq counter must keep counting (clients drop non-increasing seqs).
+  for (const sid of dropExpiredUnwatched(unwatchedTracker, eventBuffer, Date.now(), id => sessions.has(id))) {
     log(`[buffer] Dropped un-watched hook-only session ${sid.slice(0, SESSION_ID_DISPLAY)}`)
   }
 }
@@ -686,9 +711,14 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
     const projectDir = path.join(CLAUDE_DIR, encoded)
     if (fs.existsSync(projectDir)) {
       try {
-        projectDirWatcher = fs.watch(projectDir, (_eventType, filename) => {
+        const pw = fs.watch(projectDir, (_eventType, filename) => {
           if (filename?.endsWith('.jsonl')) scanForActiveSessions(workspace)
         })
+        pw.on('error', (err) => {
+          console.warn('[relay] project dir watcher error (the 5 s scan remains):', err)
+          try { pw.close() } catch { /* already closed */ }
+        })
+        projectDirWatcher = pw
       } catch {}
     }
   }

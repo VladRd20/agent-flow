@@ -106,4 +106,20 @@ export class UnwatchedTracker {
   get size(): number { return this.since.size }
 }
 
+/**
+ * Drop the event buffers of expired un-watched sessions. Only the buffer goes:
+ * seq counters are never reset or lowered within one relay epoch, because
+ * clients reject any event whose seq is not above the last one they saw.
+ */
+export function dropExpiredUnwatched<T>(
+  tracker: UnwatchedTracker,
+  buffers: Map<string, T[]>,
+  now: number,
+  isWatched: (sessionId: string) => boolean,
+): string[] {
+  const dropped = tracker.sweep(now, isWatched)
+  for (const sid of dropped) buffers.delete(sid)
+  return dropped
+}
+
 export { WarnLimiter } from '../extension/src/warn-limiter'

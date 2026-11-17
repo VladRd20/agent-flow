@@ -53,7 +53,7 @@ export function* iterateFileLines(filePath: string, size: number, chunkBytes = 4
 export async function* iterateFileLinesAsync(filePath: string, size: number, chunkBytes = 1024 * 1024): AsyncGenerator<string> {
   const fh = await fs.promises.open(filePath, 'r')
   try {
-    const buf = Buffer.alloc(chunkBytes)
+    const buf = Buffer.allocUnsafe(Math.max(1, Math.min(chunkBytes, size)))
     let pos = 0
     let carry: Buffer = Buffer.alloc(0)
     while (pos < size) {
