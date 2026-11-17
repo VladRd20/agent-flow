@@ -11,8 +11,12 @@ export interface TimelineMessage {
 }
 
 export interface TimelineCache {
-  /** Last message id folded in, per agent (identity, not array length: conversations are capped). */
-  lastSeen: Map<string, string>
+  /**
+   * Stable keys of messages already folded in. Message ids are NOT stable (seekToTime replays
+   * the log and every message gets a fresh id), so the key is agent + timestamp + index among
+   * that agent's messages sharing the timestamp: the same replayed event maps to the same key.
+   */
+  seen: Set<string>
   /** Sorted by timestamp, capped at `cap`. */
   events: TimelineEvent[]
   idCounter: number
@@ -20,16 +24,21 @@ export interface TimelineCache {
 }
 
 export function createTimelineCache(cap = MAX_TIMELINE_EVENTS): TimelineCache {
-  return { lastSeen: new Map(), events: [], idCounter: 0, cap }
+  return { seen: new Set(), events: [], idCounter: 0, cap }
 }
 
-/** Messages after the last one already seen (all of them when it has rolled off the capped array). */
-export function newMessages<T extends { id: string }>(msgs: readonly T[], lastSeenId: string | undefined): readonly T[] {
-  if (msgs.length === 0 || lastSeenId === undefined) return msgs
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].id === lastSeenId) return msgs.slice(i + 1)
+/** Keys that survive a replay: `${agent}|${timestamp}|${nth message at that timestamp}`. */
+export function messageKeys(agentId: string, msgs: readonly { timestamp: number }[]): string[] {
+  const keys: string[] = new Array(msgs.length)
+  let prevTs = NaN
+  let n = 0
+  for (let i = 0; i < msgs.length; i++) {
+    const ts = msgs[i].timestamp
+    n = ts === prevTs ? n + 1 : 0
+    prevTs = ts
+    keys[i] = `${agentId}|${ts}|${n}`
   }
-  return msgs
+  return keys
 }
 
 function insertSorted(events: TimelineEvent[], ev: TimelineEvent): void {
@@ -50,9 +59,11 @@ function insertSorted(events: TimelineEvent[], ev: TimelineEvent): void {
 export function mergeTimelineEvents(cache: TimelineCache, conversations: ReadonlyMap<string, readonly TimelineMessage[]>): boolean {
   let changed = false
   for (const [agentId, msgs] of conversations) {
-    const fresh = newMessages(msgs, cache.lastSeen.get(agentId))
-    if (fresh.length === 0) continue
-    for (const msg of fresh) {
+    const keys = messageKeys(agentId, msgs)
+    for (let i = 0; i < msgs.length; i++) {
+      if (cache.seen.has(keys[i])) continue
+      cache.seen.add(keys[i])
+      const msg = msgs[i]
       insertSorted(cache.events, {
         id: `event-${cache.idCounter++}`,
         type: msg.type === 'tool_call' ? 'tool_call' : msg.type === 'tool_result' ? 'tool_result' : 'message',
@@ -60,10 +71,15 @@ export function mergeTimelineEvents(cache: TimelineCache, conversations: Readonl
         timestamp: msg.timestamp,
         nodeId: agentId,
       })
+      changed = true
     }
-    cache.lastSeen.set(agentId, msgs[msgs.length - 1].id)
-    changed = true
   }
   if (cache.events.length > cache.cap) cache.events.splice(0, cache.events.length - cache.cap)
+  // Bound the key set (insertion order = oldest first) so hours of traffic cannot grow it forever
+  const seenCap = cache.cap * 10
+  if (cache.seen.size > seenCap) {
+    let drop = cache.seen.size - seenCap
+    for (const k of cache.seen) { if (drop-- <= 0) break; cache.seen.delete(k) }
+  }
   return changed
 }

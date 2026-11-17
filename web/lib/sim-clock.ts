@@ -40,3 +40,16 @@ const noopSubscribe = () => () => {}
 export function useSimClock(clock: SimClock, enabled = true): ClockSnapshot {
   return useSyncExternalStore(enabled ? clock.subscribe : noopSubscribe, clock.getSnapshot, clock.getSnapshot)
 }
+
+/** Longest gap one idle tick advances the clock while the tab stayed visible. */
+export const IDLE_TICK_MAX_S = 60
+
+/**
+ * Seconds the idle clock advances for one tick. The first tick after the tab was hidden
+ * advances by the full elapsed time (no cap), so the readout is not left behind; ordinary
+ * ticks keep the cap as a guard against timer stalls.
+ */
+export function idleTickDelta(elapsedMs: number, resumedFromHidden: boolean): number {
+  const s = Math.max(0, elapsedMs) / 1000
+  return resumedFromHidden ? s : Math.min(s, IDLE_TICK_MAX_S)
+}
